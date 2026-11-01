@@ -4,12 +4,21 @@ from rest_framework import status
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 
+from .services.assessment import (
+    AssessmentError,
+    AssessmentTimeout,
+    InvalidAssessmentResponse,
+    assess_text_quality,
+)
 from .services.gemini import explain_issues_in_vietnamese
 from .services.sapling import check_text_with_sapling
 
 
 SAPLING_TIMEOUT = 30
 GEMINI_TIMEOUT = 25
+ASSESSMENT_TIMEOUT = 20
+MIN_ASSESSMENT_WORDS = 20
+MAX_ASSESSMENT_CHARACTERS = 10000
 
 
 @api_view(['GET'])
@@ -18,6 +27,37 @@ def health_check(request):
         'status': 'ok',
         'message': 'Django backend is running successfully.',
     })
+
+
+@api_view(['POST'])
+def assess_quality(request):
+    text = request.data.get('text', '')
+    language = request.data.get('language', 'en-US')
+    if not isinstance(text, str):
+        return Response({'success': False, 'error': 'Invalid text format. Expected a string.'}, status=status.HTTP_400_BAD_REQUEST)
+    if not isinstance(language, str) or not language.strip():
+        return Response({'success': False, 'error': 'Invalid language format.'}, status=status.HTTP_400_BAD_REQUEST)
+    if len(text) > MAX_ASSESSMENT_CHARACTERS:
+        return Response({'success': False, 'error': 'Text must not exceed 10,000 characters.'}, status=status.HTTP_400_BAD_REQUEST)
+    if len(text.split()) < MIN_ASSESSMENT_WORDS:
+        return Response({'success': False, 'error': 'Text must contain at least 20 words.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    executor = ThreadPoolExecutor(max_workers=1)
+    future = executor.submit(assess_text_quality, text, language.strip())
+    try:
+        assessment = future.result(timeout=ASSESSMENT_TIMEOUT)
+        return Response({'success': True, **assessment})
+    except FutureTimeoutError:
+        future.cancel()
+        return Response({'success': False, 'error': 'Quality assessment timed out.'}, status=status.HTTP_504_GATEWAY_TIMEOUT)
+    except AssessmentTimeout:
+        return Response({'success': False, 'error': 'Quality assessment timed out.'}, status=status.HTTP_504_GATEWAY_TIMEOUT)
+    except InvalidAssessmentResponse:
+        return Response({'success': False, 'error': 'Gemini returned an invalid assessment.'}, status=status.HTTP_502_BAD_GATEWAY)
+    except AssessmentError:
+        return Response({'success': False, 'error': 'Quality assessment is temporarily unavailable.'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+    finally:
+        executor.shutdown(wait=False)
 
 
 @api_view(['POST'])

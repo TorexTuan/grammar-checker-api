@@ -3,7 +3,7 @@ from rest_framework.routers import DefaultRouter
 
 from .auth_views import csrf_token, login_view, logout_view, me, register
 from .document_views import DocumentViewSet
-from .views import health_check, check_grammar
+from .views import assess_quality, health_check, check_grammar
 
 router = DefaultRouter()
 router.register('documents', DocumentViewSet, basename='document')
@@ -11,6 +11,7 @@ router.register('documents', DocumentViewSet, basename='document')
 urlpatterns = [
     path('health/', health_check, name='health-check'),
     path('check/', check_grammar, name='check-grammar'),
+    path('assess/', assess_quality, name='assess-quality'),
     path('auth/csrf/', csrf_token, name='auth-csrf'),
     path('auth/register/', register, name='auth-register'),
     path('auth/login/', login_view, name='auth-login'),
