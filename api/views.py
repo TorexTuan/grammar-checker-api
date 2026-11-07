@@ -11,7 +11,20 @@ from .services.assessment import (
     assess_text_quality,
 )
 from .services.gemini import explain_issues_in_vietnamese
-from .services.sapling import check_text_with_sapling
+from .services.sapling import (
+    MAX_AUTOCOMPLETE_QUERY_LENGTH,
+    MAX_REPHRASE_TEXT_LENGTH,
+    InvalidSaplingRephraseResponse,
+    SaplingAutocompleteError,
+    SaplingAutocompleteTimeout,
+    SaplingRephraseError,
+    SaplingRephraseRateLimit,
+    SaplingRephraseTimeout,
+    accept_sapling_completion,
+    autocomplete_with_sapling,
+    check_text_with_sapling,
+    rephrase_with_sapling,
+)
 
 
 SAPLING_TIMEOUT = 30
@@ -19,6 +32,8 @@ GEMINI_TIMEOUT = 25
 ASSESSMENT_TIMEOUT = 20
 MIN_ASSESSMENT_WORDS = 20
 MAX_ASSESSMENT_CHARACTERS = 10000
+MAX_AUTOCOMPLETE_SESSION_LENGTH = 128
+MAX_AUTOCOMPLETE_OUTPUT_LENGTH = 1000
 
 
 @api_view(['GET'])
@@ -27,6 +42,144 @@ def health_check(request):
         'status': 'ok',
         'message': 'Django backend is running successfully.',
     })
+
+
+def _autocomplete_string(data, field, maximum):
+    value = data.get(field)
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f'Invalid {field}. Expected a non-empty string.')
+    if len(value) > maximum:
+        raise ValueError(f'{field} must not exceed {maximum} characters.')
+    return value
+
+
+@api_view(['POST'])
+def autocomplete(request):
+    try:
+        query = _autocomplete_string(request.data, 'query', MAX_AUTOCOMPLETE_QUERY_LENGTH)
+        session_id = request.data.get('session_id')
+        if session_id is not None:
+            session_id = _autocomplete_string(
+                request.data, 'session_id', MAX_AUTOCOMPLETE_SESSION_LENGTH
+            )
+        completion = autocomplete_with_sapling(query, session_id)
+        return Response({'success': True, **completion})
+    except ValueError as exc:
+        return Response({'success': False, 'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+    except SaplingAutocompleteTimeout:
+        return Response(
+            {'success': False, 'error': 'Autocomplete request timed out.'},
+            status=status.HTTP_504_GATEWAY_TIMEOUT,
+        )
+    except SaplingAutocompleteError as exc:
+        print(f'[Sapling Autocomplete Error]: {exc}')
+        return Response(
+            {'success': False, 'error': 'Autocomplete is temporarily unavailable.'},
+            status=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
+
+
+@api_view(['POST'])
+def accept_autocomplete(request):
+    try:
+        completion_id = _autocomplete_string(request.data, 'hash', 128)
+        query = _autocomplete_string(request.data, 'query', MAX_AUTOCOMPLETE_QUERY_LENGTH)
+        completion = _autocomplete_string(
+            request.data, 'completion', MAX_AUTOCOMPLETE_OUTPUT_LENGTH
+        )
+        session_id = request.data.get('session_id')
+        if session_id is not None:
+            session_id = _autocomplete_string(
+                request.data, 'session_id', MAX_AUTOCOMPLETE_SESSION_LENGTH
+            )
+        accept_sapling_completion(completion_id, query, completion, session_id)
+        return Response({'success': True})
+    except ValueError as exc:
+        return Response({'success': False, 'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+    except SaplingAutocompleteTimeout:
+        return Response(
+            {'success': False, 'error': 'Autocomplete feedback timed out.'},
+            status=status.HTTP_504_GATEWAY_TIMEOUT,
+        )
+    except SaplingAutocompleteError as exc:
+        print(f'[Sapling Autocomplete Feedback Error]: {exc}')
+        return Response(
+            {'success': False, 'error': 'Unable to record autocomplete feedback.'},
+            status=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
+
+
+@api_view(['POST'])
+def rephrase(request):
+    text = request.data.get('text')
+    style = request.data.get('style')
+    num_results = request.data.get('num_results', 3)
+
+    if not isinstance(text, str) or not text.strip():
+        return Response(
+            {'success': False, 'error': 'text must be a non-empty string.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if len(text) > MAX_REPHRASE_TEXT_LENGTH:
+        return Response(
+            {
+                'success': False,
+                'error': f'text must not exceed {MAX_REPHRASE_TEXT_LENGTH} characters.',
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if style != 'professional':
+        return Response(
+            {'success': False, 'error': 'style must be professional.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if (
+        isinstance(num_results, bool)
+        or not isinstance(num_results, int)
+        or not 1 <= num_results <= 3
+    ):
+        return Response(
+            {'success': False, 'error': 'num_results must be an integer from 1 to 3.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        results = rephrase_with_sapling(text, num_results)
+        return Response({
+            'success': True,
+            'original': text,
+            'results': results,
+        })
+    except SaplingRephraseRateLimit as exc:
+        response = Response(
+            {'success': False, 'error': 'Professional rewrite rate limit reached.'},
+            status=status.HTTP_429_TOO_MANY_REQUESTS,
+        )
+        if exc.retry_after:
+            response['Retry-After'] = exc.retry_after
+        return response
+    except SaplingRephraseTimeout:
+        return Response(
+            {'success': False, 'error': 'Professional rewrite request timed out.'},
+            status=status.HTTP_504_GATEWAY_TIMEOUT,
+        )
+    except InvalidSaplingRephraseResponse as exc:
+        print(f'[Sapling Rephrase Invalid Response]: {exc}')
+        return Response(
+            {'success': False, 'error': 'Professional rewrite returned an invalid response.'},
+            status=status.HTTP_502_BAD_GATEWAY,
+        )
+    except ValueError as exc:
+        return Response(
+            {'success': False, 'error': str(exc)},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    except SaplingRephraseError as exc:
+        print(f'[Sapling Rephrase Error]: {exc}')
+        return Response(
+            {'success': False, 'error': 'Professional rewrite is temporarily unavailable.'},
+            status=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
 
 
 @api_view(['POST'])

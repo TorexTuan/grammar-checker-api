@@ -8,6 +8,15 @@ from .models import Document
 
 User = get_user_model()
 DOC = {'type': 'doc', 'content': [{'type': 'paragraph', 'content': [{'type': 'text', 'text': 'Hello'}]}]}
+COMMENT = {
+    'id': 'comment-1',
+    'from': 1,
+    'to': 6,
+    'quote': 'Hello',
+    'note': 'Review this sentence.',
+    'createdAt': '2026-11-03T00:00:00.000Z',
+    'unlinked': False,
+}
 
 
 class AuthApiTests(APITestCase):
@@ -71,11 +80,16 @@ class DocumentApiTests(APITestCase):
 
     def test_document_crud_and_version_conflict(self):
         response = self.client.post('/api/documents/', {
-            'title': 'My document', 'content': DOC, 'comments': [],
+            'title': 'My document', 'content': DOC, 'comments': [COMMENT],
         }, format='json')
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         document_id = response.data['id']
         self.assertEqual(response.data['version'], 1)
+        self.assertEqual(response.data['comments'], [COMMENT])
+
+        retrieved = self.client.get(f'/api/documents/{document_id}/')
+        self.assertEqual(retrieved.status_code, status.HTTP_200_OK)
+        self.assertEqual(retrieved.data['comments'], [COMMENT])
 
         listing = self.client.get('/api/documents/')
         self.assertEqual(listing.status_code, status.HTTP_200_OK)
