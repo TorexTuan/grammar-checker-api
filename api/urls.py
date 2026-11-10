@@ -5,6 +5,7 @@ from .auth_views import csrf_token, login_view, logout_view, me, register
 from .document_views import DocumentViewSet
 from .views import (
     accept_autocomplete,
+    ai_detect,
     assess_quality,
     autocomplete,
     check_grammar,
@@ -17,6 +18,7 @@ router.register('documents', DocumentViewSet, basename='document')
 
 urlpatterns = [
     path('health/', health_check, name='health-check'),
+    path('ai-detect/', ai_detect, name='ai-detect'),
     path('check/', check_grammar, name='check-grammar'),
     path('assess/', assess_quality, name='assess-quality'),
     path('autocomplete/', autocomplete, name='autocomplete'),

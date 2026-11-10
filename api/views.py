@@ -1,8 +1,18 @@
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 
 from rest_framework import status
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, permission_classes, throttle_classes
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.throttling import UserRateThrottle
+
+from .services.ai_detector import (
+    AiDetectorError,
+    AiDetectorRateLimit,
+    AiDetectorTimeout,
+    InvalidAiDetectorResponse,
+    detect_ai_text,
+)
 
 from .services.assessment import (
     AssessmentError,
@@ -34,6 +44,12 @@ MIN_ASSESSMENT_WORDS = 20
 MAX_ASSESSMENT_CHARACTERS = 10000
 MAX_AUTOCOMPLETE_SESSION_LENGTH = 128
 MAX_AUTOCOMPLETE_OUTPUT_LENGTH = 1000
+MIN_AI_DETECT_CHARACTERS = 300
+MAX_AI_DETECT_CHARACTERS = 10000
+
+
+class AiDetectorUserThrottle(UserRateThrottle):
+    rate = '10/hour'
 
 
 @api_view(['GET'])
@@ -42,6 +58,56 @@ def health_check(request):
         'status': 'ok',
         'message': 'Django backend is running successfully.',
     })
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+@throttle_classes([AiDetectorUserThrottle])
+def ai_detect(request):
+    text = request.data.get('text')
+    if not isinstance(text, str):
+        return Response(
+            {'success': False, 'error': 'text must be a string.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if len(text) < MIN_AI_DETECT_CHARACTERS:
+        return Response(
+            {'success': False, 'error': f'Text must contain at least {MIN_AI_DETECT_CHARACTERS} characters.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if len(text) > MAX_AI_DETECT_CHARACTERS:
+        return Response(
+            {'success': False, 'error': f'Text must not exceed {MAX_AI_DETECT_CHARACTERS:,} characters.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        return Response({'success': True, **detect_ai_text(text)})
+    except AiDetectorRateLimit as exc:
+        response = Response(
+            {'success': False, 'error': 'AI detector rate limit reached.'},
+            status=status.HTTP_429_TOO_MANY_REQUESTS,
+        )
+        if exc.retry_after:
+            response['Retry-After'] = exc.retry_after
+        return response
+    except AiDetectorTimeout:
+        return Response(
+            {'success': False, 'error': 'AI detection timed out.'},
+            status=status.HTTP_504_GATEWAY_TIMEOUT,
+        )
+    except InvalidAiDetectorResponse as exc:
+        print(f'[AI Detector Invalid Response]: {exc}')
+        return Response(
+            {'success': False, 'error': 'AI detector returned an invalid response.'},
+            status=status.HTTP_502_BAD_GATEWAY,
+        )
+    except AiDetectorError as exc:
+        print(f'[AI Detector Error]: {exc}')
+        return Response(
+            {'success': False, 'error': 'AI detector is temporarily unavailable.'},
+            status=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
 
 
 def _autocomplete_string(data, field, maximum):
