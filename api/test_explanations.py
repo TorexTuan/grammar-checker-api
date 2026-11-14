@@ -44,6 +44,24 @@ class ContextualExplanationTests(SimpleTestCase):
         self.assertIn('Dấu hiệu “last week”', explanation)
         self.assertIn('“walked” là dạng quá khứ của “walk”', explanation)
 
+    def test_compound_subject_pronoun_and_past_tense_are_both_explained(self):
+        text = 'Last month, me and my friends decides to travel.'
+        explanation = _contextual_fallback_explanation(
+            self.issue(
+                text,
+                'me and my friends decides',
+                'my friends and I decided',
+            ),
+            text,
+        )
+        self.assertIn('“me and my friends” giữ vai trò chủ ngữ', explanation)
+        self.assertIn('đại từ chủ ngữ “I”', explanation)
+        self.assertIn('đại từ tân ngữ “me”', explanation)
+        self.assertIn('“my friends and I”', explanation)
+        self.assertIn('Dấu hiệu “Last month”', explanation)
+        self.assertIn('thì quá khứ đơn', explanation)
+        self.assertIn('“decided” là dạng quá khứ của “decide”', explanation)
+
     def test_singular_subject_is_named_for_hasnt(self):
         text = "My brother haven't finished the report."
         explanation = _contextual_fallback_explanation(
@@ -184,6 +202,32 @@ class ContextualExplanationTests(SimpleTestCase):
         self.assertEqual(explained, 0)
         self.assertIn('Sau “have”', issues[0]['explanation'])
         self.assertIn('“finished” là V3 của “finish”', issues[0]['explanation'])
+
+    @patch('api.services.gemini.get_gemini_client')
+    def test_compound_subject_gemini_explanation_must_explain_pronoun_roles(self, client_factory):
+        text = 'Last month, me and my friends decides to travel.'
+        issue = self.issue(
+            text,
+            'me and my friends decides',
+            'my friends and I decided',
+        )
+        client = MagicMock()
+        client.models.generate_content.return_value.text = json.dumps([{
+            'id': 'issue-1',
+            'explanation': (
+                'Thay “me and my friends decides” bằng “my friends and I decided”. '
+                'Dấu hiệu “Last month” cho biết hành động đã kết thúc trong quá khứ, nên dùng thì quá khứ đơn.'
+            ),
+            'concept_code': 'past_simple',
+        }], ensure_ascii=False)
+        client_factory.return_value = client
+
+        issues, explained = explain_issues_in_vietnamese([issue], text)
+
+        self.assertEqual(explained, 0)
+        self.assertIn('đại từ chủ ngữ “I”', issues[0]['explanation'])
+        self.assertIn('đại từ tân ngữ “me”', issues[0]['explanation'])
+        self.assertIn('“decided” là dạng quá khứ của “decide”', issues[0]['explanation'])
 
     @patch('api.services.gemini.get_gemini_client')
     def test_generic_since_for_gemini_explanation_is_rejected(self, client_factory):

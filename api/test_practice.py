@@ -3,13 +3,19 @@ from unittest.mock import MagicMock, patch
 
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
+from django.db.models import Count
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APIClient, APITestCase
 
 from .models import PracticeExercise, PracticeMistake, PracticeProfile
 from .services.practice import classify_concept, enrich_practice_issues, record_detected_mistakes
-from .services.practice import generate_with_gemini
+from .services.practice import (
+    VERB_SEEDS,
+    _personalized_seed_item,
+    generate_with_gemini,
+    prompt_template_signature,
+)
 
 
 User = get_user_model()
@@ -90,7 +96,106 @@ class PracticeApiTests(APITestCase):
         self.assertEqual(response.data['mode'], 'personalized')
         self.assertEqual(response.data['total'], 10)
         self.assertEqual(len(response.data['items']), 10)
+        difficulties = [item['difficulty'] for item in response.data['items']]
+        exercise_types = [item['exercise_type'] for item in response.data['items']]
+        self.assertEqual(difficulties.count('easy'), 3)
+        self.assertEqual(difficulties.count('medium'), 4)
+        self.assertEqual(difficulties.count('hard'), 3)
+        self.assertEqual(exercise_types.count('multiple_choice'), 6)
+        self.assertEqual(exercise_types.count('fill_blank'), 4)
+        self.assertEqual(difficulties, sorted(difficulties, key=('easy', 'medium', 'hard').index))
         self.assertTrue(all(exercise.mistake_id == mistake.id for exercise in PracticeExercise.objects.filter(session_items__session_id=response.data['id'])))
+
+    @patch('api.practice_views.generate_with_gemini', return_value=([], None))
+    def test_personalized_groups_duplicate_mistakes_by_concept(self, _generate):
+        for index in range(2):
+            PracticeMistake.objects.create(
+                owner=self.user,
+                category='verb_tense',
+                concept_code='past_simple',
+                concept_label='Past simple',
+                source='editor_live',
+                sentence_context=f'Private source sentence {index}.',
+                original='go',
+                correction='went',
+                occurrence_count=index + 1,
+                fingerprint=f'same-concept-{index}',
+            )
+        response = self.client.post('/api/practice/sessions/', {'mode': 'personalized'}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
+        self.assertEqual(response.data['focus_concepts'], [{'code': 'past_simple', 'label': 'Past simple'}])
+        self.assertEqual(len(response.data['items']), 10)
+        self.assertFalse(any('Private source sentence' in item['prompt'] for item in response.data['items']))
+
+    def test_personalized_generation_key_ignores_decorative_prefix(self):
+        plain = _personalized_seed_item('past_simple', 'multiple_choice', 'medium', 0)
+        prefixed = _personalized_seed_item('past_simple', 'multiple_choice', 'medium', len(VERB_SEEDS))
+        self.assertNotEqual(plain['prompt'], prefixed['prompt'])
+        self.assertEqual(plain['generation_key'], prefixed['generation_key'])
+
+    @patch('api.practice_views.generate_with_gemini', return_value=([], None))
+    def test_single_concept_has_no_repeat_in_rolling_thirty_questions(self, _generate):
+        PracticeMistake.objects.create(
+            owner=self.user,
+            category='verb_tense',
+            concept_code='past_simple',
+            concept_label='Past simple',
+            source='editor_live',
+            sentence_context='A private sentence that must not be copied.',
+            original='leave',
+            correction='left',
+            fingerprint='single-concept-history',
+        )
+        recent_prompts = []
+        recent_keys = []
+        for _ in range(6):
+            response = self.client.post('/api/practice/sessions/', {'mode': 'personalized'}, format='json')
+            self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
+            ids = [item['exercise_id'] for item in response.data['items']]
+            exercises = list(PracticeExercise.objects.filter(id__in=ids))
+            prompts = [exercise.prompt for exercise in exercises]
+            keys = [exercise.generation_key for exercise in exercises]
+            self.assertEqual(len(prompts), 10)
+            self.assertEqual(len(set(keys)), 10)
+            self.assertFalse(set(prompts) & set(recent_prompts[-30:]))
+            self.assertFalse(set(keys) & set(recent_keys[-30:]))
+            recent_prompts.extend(prompts)
+            recent_keys.extend(keys)
+
+    @patch('api.practice_views.generate_with_gemini', return_value=([], None))
+    def test_personalized_uses_matching_unused_cache_item(self, _generate):
+        mistake = PracticeMistake.objects.create(
+            owner=self.user,
+            category='verb_tense',
+            concept_code='past_simple',
+            concept_label='Past simple',
+            source='editor_live',
+            sentence_context='She leave yesterday.',
+            original='leave',
+            correction='left',
+            fingerprint='cache-mistake',
+        )
+        cached = PracticeExercise.objects.create(
+            owner=self.user,
+            mistake=mistake,
+            exercise_type='multiple_choice',
+            mode='personalized',
+            difficulty='easy',
+            category='verb_tense',
+            prompt='Yesterday, the guide ___ the station before noon.',
+            hint='',
+            options=['leave', 'left', 'leaves', 'leaving'],
+            accepted_answers=['left'],
+            explanation='“Yesterday” requires the past simple form “left”.',
+            source='gemini_primary',
+            fingerprint='cached-content',
+            generation_key='cached-structure',
+        )
+        response = self.client.post('/api/practice/sessions/', {'mode': 'personalized'}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
+        self.assertIn(str(cached.id), [item['exercise_id'] for item in response.data['items']])
+        cached.refresh_from_db()
+        self.assertEqual(cached.used_count, 1)
 
     @patch('api.practice_views.generate_with_gemini', return_value=([], None))
     def test_personalized_fallback_stays_complete_after_recent_templates_are_used(self, _generate):
@@ -114,13 +219,27 @@ class PracticeApiTests(APITestCase):
             )
 
         recent_prompts = []
-        for _ in range(7):
+        recent_generation_keys = []
+        for session_index in range(7):
             response = self.client.post('/api/practice/sessions/', {'mode': 'personalized'}, format='json')
             self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
             prompts = [item['prompt'] for item in response.data['items']]
+            exercise_ids = [item['exercise_id'] for item in response.data['items']]
+            generation_keys = list(PracticeExercise.objects.filter(id__in=exercise_ids).values_list('generation_key', flat=True))
             self.assertEqual(len(prompts), 10)
+            self.assertEqual(len(set(generation_keys)), 10)
+            self.assertTrue(all(generation_keys))
             self.assertFalse(set(prompts) & set(recent_prompts[-30:]))
+            self.assertFalse(set(generation_keys) & set(recent_generation_keys[-30:]))
+            if session_index == 0:
+                exercises = PracticeExercise.objects.filter(id__in=exercise_ids)
+                concept_counts = sorted(
+                    exercises.values('mistake__concept_code').annotate(total=Count('id')).values_list('total', flat=True),
+                    reverse=True,
+                )
+                self.assertEqual(concept_counts, [4, 3, 3])
             recent_prompts.extend(prompts)
+            recent_generation_keys.extend(generation_keys)
 
         verb_exercises = PracticeExercise.objects.filter(mistake__concept_code='verb_tense')
         self.assertTrue(verb_exercises.exists())
@@ -145,6 +264,22 @@ class PracticeApiTests(APITestCase):
         profile = PracticeProfile.objects.get(owner=self.user)
         self.assertEqual(profile.general_level, 'medium')
         self.assertTrue(all(call.args[0] == [] for call in generate.call_args_list))
+
+    @patch('api.practice_views.generate_with_gemini', return_value=([], None))
+    def test_general_fallback_does_not_repeat_templates_in_consecutive_sessions(self, _generate):
+        recent_prompts = []
+        previous_signatures = set()
+        for _ in range(6):
+            response = self.client.post('/api/practice/sessions/', {'mode': 'general'}, format='json')
+            self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
+            prompts = [item['prompt'] for item in response.data['items']]
+            signatures = {prompt_template_signature(prompt) for prompt in prompts}
+            self.assertEqual(len(prompts), 10)
+            self.assertEqual(len(signatures), 10)
+            self.assertFalse(set(prompts) & set(recent_prompts[-30:]))
+            self.assertFalse(signatures & previous_signatures)
+            previous_signatures = signatures
+            recent_prompts.extend(prompts)
 
     @patch('api.practice_views.generate_with_gemini', return_value=([], None))
     def test_fallback_session_hides_answers_and_grades_idempotently(self, _generate):

@@ -21,6 +21,7 @@ from .services.practice import (
     TOPICS,
     TYPE_TARGETS,
     CONCEPT_LABELS,
+    CONCEPT_TOPICS,
     fingerprint,
     general_fallback_exercises,
     generate_with_gemini,
@@ -28,6 +29,7 @@ from .services.practice import (
     normalize_answer,
     normalize_topic,
     personalized_fallback_exercises,
+    prompt_template_signature,
 )
 
 
@@ -165,6 +167,7 @@ def _public_item(item):
         'exercise_type': exercise.exercise_type,
         'category': exercise.category,
         'category_label': exercise.mistake.concept_label if exercise.mistake_id else TOPICS.get(exercise.category, TOPICS['other_grammar']),
+        'difficulty': exercise.difficulty,
         'prompt': exercise.prompt,
         'hint': exercise.hint if exercise.exercise_type == PracticeExercise.TYPE_FILL_BLANK else '',
         'options': exercise.options if exercise.exercise_type == PracticeExercise.TYPE_MULTIPLE_CHOICE else [],
@@ -211,16 +214,28 @@ def _pick_by_targets(exercises, targets):
 
 
 def _save_exercise(user, data, source, mistake=None, mode='personalized', difficulty='medium'):
-    key = fingerprint(mode, difficulty, mistake.id if mistake else '', data['exercise_type'], data['prompt'], data['accepted_answers'][0])
+    item_difficulty = data.get('difficulty') or difficulty
+    generation_key = data.get('generation_key') or fingerprint(
+        mode,
+        mistake.concept_code if mistake else data.get('category', ''),
+        item_difficulty,
+        data['exercise_type'],
+        prompt_template_signature(data['prompt']),
+        data['accepted_answers'][0],
+    )
+    key = fingerprint(mode, item_difficulty, mistake.id if mistake else '', data['exercise_type'], data['prompt'], data['accepted_answers'][0])
     existing = PracticeExercise.objects.filter(owner=user, fingerprint=key).first()
     if existing:
+        if not existing.generation_key:
+            existing.generation_key = generation_key
+            existing.save(update_fields=['generation_key'])
         return existing
     return PracticeExercise.objects.create(
         owner=user,
         mistake=mistake,
         exercise_type=data['exercise_type'],
         mode=mode,
-        difficulty=difficulty,
+        difficulty=item_difficulty,
         category=data['category'],
         prompt=data['prompt'],
         hint=data.get('hint', ''),
@@ -229,7 +244,90 @@ def _save_exercise(user, data, source, mistake=None, mode='personalized', diffic
         explanation=data['explanation'],
         source=source,
         fingerprint=key,
+        generation_key=generation_key,
     )
+
+
+PERSONALIZED_SLOT_PLANS = {
+    1: [[
+        {'exercise_type': 'multiple_choice', 'difficulty': 'easy'},
+        {'exercise_type': 'fill_blank', 'difficulty': 'easy'},
+        {'exercise_type': 'multiple_choice', 'difficulty': 'easy'},
+        {'exercise_type': 'multiple_choice', 'difficulty': 'medium'},
+        {'exercise_type': 'fill_blank', 'difficulty': 'medium'},
+        {'exercise_type': 'multiple_choice', 'difficulty': 'medium'},
+        {'exercise_type': 'fill_blank', 'difficulty': 'medium'},
+        {'exercise_type': 'multiple_choice', 'difficulty': 'hard'},
+        {'exercise_type': 'fill_blank', 'difficulty': 'hard'},
+        {'exercise_type': 'multiple_choice', 'difficulty': 'hard'},
+    ]],
+    2: [
+        [
+            {'exercise_type': 'multiple_choice', 'difficulty': 'easy'},
+            {'exercise_type': 'fill_blank', 'difficulty': 'easy'},
+            {'exercise_type': 'multiple_choice', 'difficulty': 'medium'},
+            {'exercise_type': 'fill_blank', 'difficulty': 'medium'},
+            {'exercise_type': 'multiple_choice', 'difficulty': 'hard'},
+        ],
+        [
+            {'exercise_type': 'multiple_choice', 'difficulty': 'easy'},
+            {'exercise_type': 'fill_blank', 'difficulty': 'medium'},
+            {'exercise_type': 'multiple_choice', 'difficulty': 'medium'},
+            {'exercise_type': 'fill_blank', 'difficulty': 'hard'},
+            {'exercise_type': 'multiple_choice', 'difficulty': 'hard'},
+        ],
+    ],
+    3: [
+        [
+            {'exercise_type': 'multiple_choice', 'difficulty': 'easy'},
+            {'exercise_type': 'fill_blank', 'difficulty': 'medium'},
+            {'exercise_type': 'multiple_choice', 'difficulty': 'medium'},
+            {'exercise_type': 'fill_blank', 'difficulty': 'hard'},
+        ],
+        [
+            {'exercise_type': 'multiple_choice', 'difficulty': 'easy'},
+            {'exercise_type': 'multiple_choice', 'difficulty': 'medium'},
+            {'exercise_type': 'fill_blank', 'difficulty': 'hard'},
+        ],
+        [
+            {'exercise_type': 'multiple_choice', 'difficulty': 'easy'},
+            {'exercise_type': 'multiple_choice', 'difficulty': 'medium'},
+            {'exercise_type': 'fill_blank', 'difficulty': 'hard'},
+        ],
+    ],
+}
+
+
+def _rank_personalized_concepts(user):
+    mistakes = list(PracticeMistake.objects.filter(
+        owner=user,
+        source='editor_live',
+    ).annotate(
+        wrong_count=Count('exercises__session_items', filter=Q(exercises__session_items__is_correct=False)),
+    ).order_by('-wrong_count', '-occurrence_count', '-last_seen_at'))
+    grouped = {}
+    for mistake in mistakes:
+        group = grouped.setdefault(mistake.concept_code, {
+            'code': mistake.concept_code,
+            'label': mistake.concept_label,
+            'wrong_count': 0,
+            'occurrences': 0,
+            'last_seen_at': mistake.last_seen_at,
+            'mistakes': [],
+        })
+        group['wrong_count'] += mistake.wrong_count
+        group['occurrences'] += mistake.occurrence_count
+        group['last_seen_at'] = max(group['last_seen_at'], mistake.last_seen_at)
+        group['mistakes'].append(mistake)
+    return sorted(
+        grouped.values(),
+        key=lambda group: (group['wrong_count'], group['occurrences'], group['last_seen_at']),
+        reverse=True,
+    )[:3]
+
+
+def _matches_slot(exercise, slot):
+    return exercise.exercise_type == slot['exercise_type'] and exercise.difficulty == slot['difficulty']
 
 
 @api_view(['POST'])
@@ -240,60 +338,135 @@ def create_practice_session(request):
     if mode not in {'personalized', 'general'}:
         mode = 'personalized' if request.data.get('topic') == 'recommended' else 'general'
     profile, _ = PracticeProfile.objects.get_or_create(owner=request.user)
-    difficulty = 'medium' if mode == 'personalized' else profile.general_level
-    recent_prompts = list(PracticeSessionItem.objects.filter(
+    difficulty = 'mixed' if mode == 'personalized' else profile.general_level
+    recent_rows = list(PracticeSessionItem.objects.filter(
         session__owner=request.user,
-    ).order_by('-session__created_at', '-order').values_list('exercise__prompt', flat=True)[:30])
+        **({'session__mode': 'personalized'} if mode == 'personalized' else {}),
+    ).order_by('-session__created_at', '-order').values_list(
+        'exercise__prompt', 'exercise__generation_key',
+    )[:30])
+    recent_prompts = [row[0] for row in recent_rows]
+    recent_generation_keys = {row[1] for row in recent_rows if row[1]}
     selected = []
     source_summary = {}
     focus_concepts = []
 
     if mode == 'personalized':
-        mistakes = list(PracticeMistake.objects.filter(
-            owner=request.user, source='editor_live',
-        ).annotate(
-            wrong_count=Count('exercises__session_items', filter=Q(exercises__session_items__is_correct=False)),
-        ).order_by('-wrong_count', '-occurrence_count', '-last_seen_at')[:3])
-        if not mistakes:
+        concept_groups = _rank_personalized_concepts(request.user)
+        if not concept_groups:
             return Response({'error': 'Write in the Editor first so Practice can learn from your grammar mistakes.'}, status=status.HTTP_400_BAD_REQUEST)
-        distributions = {
-            1: [(6, 4)],
-            2: [(3, 2), (3, 2)],
-            3: [(2, 2), (2, 1), (2, 1)],
-        }[len(mistakes)]
-        for mistake, (multiple_choice_count, fill_blank_count) in zip(mistakes, distributions):
-            allocation = multiple_choice_count + fill_blank_count
-            focus_concepts.append({'code': mistake.concept_code, 'label': mistake.concept_label})
-            local_targets = {'multiple_choice': multiple_choice_count, 'fill_blank': fill_blank_count}
-            generated, gemini_source = generate_with_gemini(
-                [mistake], mistake.category, allocation, mode, difficulty, recent_prompts, local_targets
-            )
-            for data in generated:
-                if local_targets.get(data['exercise_type'], 0) <= 0 or is_recent_prompt(data['prompt'], [*recent_prompts, *[x.prompt for x in selected]]):
-                    continue
-                exercise = _save_exercise(request.user, data, gemini_source or 'gemini_primary', mistake, mode, difficulty)
-                if exercise.session_items.exists():
-                    continue
-                selected.append(exercise)
-                local_targets[data['exercise_type']] -= 1
-                source_summary[exercise.source] = source_summary.get(exercise.source, 0) + 1
-            missing = sum(local_targets.values())
-            if missing:
-                for data in personalized_fallback_exercises(mistake, missing, local_targets, [*recent_prompts, *[x.prompt for x in selected]]):
-                    exercise = _save_exercise(request.user, data, 'template', mistake, mode, difficulty)
-                    if exercise.session_items.exists():
-                        exercise.pk = None
-                        exercise.fingerprint = fingerprint(data['exercise_type'], data['prompt'], timezone.now().isoformat())
-                        exercise.save()
-                    selected.append(exercise)
-                    source_summary['template'] = source_summary.get('template', 0) + 1
+        slot_groups = PERSONALIZED_SLOT_PLANS[len(concept_groups)]
+        selected_keys = set(recent_generation_keys)
+
+        def select_personalized(exercise):
+            selected.append(exercise)
+            selected_keys.add(exercise.generation_key)
+            source_summary[exercise.source] = source_summary.get(exercise.source, 0) + 1
+
+        for group, slots in zip(concept_groups, slot_groups):
+            representatives = group['mistakes'][:3]
+            representative = representatives[0]
+            concept_code = group['code']
+            topic = CONCEPT_TOPICS.get(concept_code, representative.category)
+            focus_concepts.append({'code': concept_code, 'label': group['label']})
+            pending_slots = [dict(slot) for slot in slots]
+
+            cached = list(PracticeExercise.objects.filter(
+                owner=request.user,
+                mode='personalized',
+                used_count=0,
+                mistake__concept_code=concept_code,
+            ).exclude(generation_key='').order_by('created_at'))
+            for slot in list(pending_slots):
+                exercise = next((item for item in cached if (
+                    _matches_slot(item, slot) and
+                    item.generation_key not in selected_keys and
+                    not is_recent_prompt(item.prompt, [*recent_prompts, *[chosen.prompt for chosen in selected]])
+                )), None)
+                if exercise:
+                    select_personalized(exercise)
+                    cached.remove(exercise)
+                    pending_slots.remove(slot)
+
+            if pending_slots:
+                extra_slots = [dict(pending_slots[index % len(pending_slots)]) for index in range(min(2, len(pending_slots)))]
+                requested_slots = [*pending_slots, *extra_slots]
+                requested_types = {
+                    exercise_type: sum(slot['exercise_type'] == exercise_type for slot in requested_slots)
+                    for exercise_type in TYPE_TARGETS
+                }
+                generated, gemini_source = generate_with_gemini(
+                    representatives,
+                    topic,
+                    len(requested_slots),
+                    mode,
+                    'mixed',
+                    recent_prompts,
+                    requested_types,
+                    requested_slots,
+                )
+                generated_exercises = []
+                for index, data in enumerate(generated):
+                    data['category'] = topic
+                    data['generation_key'] = fingerprint(
+                        concept_code,
+                        data['difficulty'],
+                        data['exercise_type'],
+                        prompt_template_signature(data['prompt']),
+                        data['accepted_answers'][0],
+                    )
+                    if (
+                        data['generation_key'] in selected_keys or
+                        is_recent_prompt(data['prompt'], [*recent_prompts, *[chosen.prompt for chosen in selected]])
+                    ):
+                        continue
+                    exercise = _save_exercise(
+                        request.user,
+                        data,
+                        gemini_source or 'gemini_primary',
+                        representatives[index % len(representatives)],
+                        mode,
+                        data['difficulty'],
+                    )
+                    generated_exercises.append(exercise)
+                    selected_keys.add(exercise.generation_key)
+
+                for slot in list(pending_slots):
+                    exercise = next((item for item in generated_exercises if _matches_slot(item, slot)), None)
+                    if exercise:
+                        select_personalized(exercise)
+                        generated_exercises.remove(exercise)
+                        pending_slots.remove(slot)
+
+            if pending_slots:
+                fallback_items = personalized_fallback_exercises(
+                    representative,
+                    pending_slots,
+                    [*recent_prompts, *[chosen.prompt for chosen in selected]],
+                    selected_keys,
+                )
+                for slot, data in zip(list(pending_slots), fallback_items):
+                    exercise = _save_exercise(
+                        request.user,
+                        data,
+                        'template',
+                        representative,
+                        mode,
+                        data['difficulty'],
+                    )
+                    select_personalized(exercise)
+                    pending_slots.remove(slot)
     else:
         targets = dict(TYPE_TARGETS)
         generated, gemini_source = generate_with_gemini(
             [], 'mixed_grammar', SESSION_SIZE, mode, difficulty, recent_prompts, targets
         )
         for data in generated:
-            if targets.get(data['exercise_type'], 0) <= 0 or is_recent_prompt(data['prompt'], [*recent_prompts, *[x.prompt for x in selected]]):
+            if (
+                targets.get(data['exercise_type'], 0) <= 0 or
+                is_recent_prompt(data['prompt'], recent_prompts, compare_templates=True) or
+                is_recent_prompt(data['prompt'], [x.prompt for x in selected], compare_templates=True)
+            ):
                 continue
             exercise = _save_exercise(request.user, data, gemini_source or 'gemini_primary', None, mode, difficulty)
             if exercise.session_items.exists():
@@ -314,7 +487,15 @@ def create_practice_session(request):
     selected = selected[:SESSION_SIZE]
     if len(selected) != SESSION_SIZE:
         return Response({'error': 'Unable to prepare a complete practice session.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-    random.shuffle(selected)
+    if mode == 'personalized':
+        ordered = []
+        for level in ('easy', 'medium', 'hard'):
+            level_items = [exercise for exercise in selected if exercise.difficulty == level]
+            random.shuffle(level_items)
+            ordered.extend(level_items)
+        selected = ordered
+    else:
+        random.shuffle(selected)
 
     with transaction.atomic():
         session = PracticeSession.objects.create(

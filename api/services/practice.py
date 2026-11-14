@@ -183,12 +183,15 @@ def record_detected_mistakes(user, issues, excluded=None):
 PRACTICE_PROMPT = """
 You create safe English grammar exercises for a Vietnamese learner at the requested difficulty.
 Return JSON only as an array. Create exactly the requested count and match the
-required_types mix from the request. Do not copy personal names,
+required_types mix and every exercise_type/difficulty pair in requested_slots.
+Arrange the language from clear single-clause easy items, through distracting
+medium structures, to multi-clause hard items. Do not copy personal names,
 places, employers, contact details, or distinctive facts from the source sentence;
 create analogous neutral examples instead.
 
 Each item must have:
 {"exercise_type":"multiple_choice|fill_blank","category":"allowed category code",
+ "difficulty":"easy|medium|hard",
  "prompt":"English question","options":["four unique options for multiple choice"],
  "accepted_answers":["at least one exact answer"],"hint":"base word",
  "explanation":"short Vietnamese explanation"}
@@ -213,13 +216,16 @@ def _clean_strings(value, maximum, item_maximum=300):
     return result
 
 
-def validate_generated_exercise(item, requested_topic):
+def validate_generated_exercise(item, requested_topic, default_difficulty='medium'):
     if not isinstance(item, dict):
         return None
     exercise_type = item.get('exercise_type')
     if exercise_type not in TYPE_TARGETS:
         return None
     category = normalize_topic(item.get('category') or requested_topic)
+    difficulty = item.get('difficulty') or default_difficulty
+    if difficulty not in {'easy', 'medium', 'hard'}:
+        return None
     prompt = item.get('prompt')
     explanation = item.get('explanation')
     if not isinstance(prompt, str) or not prompt.strip() or len(prompt.strip()) > 800:
@@ -243,6 +249,7 @@ def validate_generated_exercise(item, requested_topic):
     return {
         'exercise_type': exercise_type,
         'category': category,
+        'difficulty': difficulty,
         'prompt': prompt.strip(),
         'hint': hint,
         'options': options,
@@ -284,13 +291,17 @@ def _practice_client(timeout_ms):
     )
 
 
-def generate_with_gemini(mistakes, topic, count=SESSION_SIZE, mode='personalized', difficulty='medium', recent_prompts=None, required_types=None):
+def generate_with_gemini(
+    mistakes, topic, count=SESSION_SIZE, mode='personalized', difficulty='medium',
+    recent_prompts=None, required_types=None, requested_slots=None,
+):
     if cache.get(BREAKER_OPEN_KEY):
         return [], None
     request_payload = {
         'count': count,
         'required_types': dict(required_types or TYPE_TARGETS),
         'difficulty': difficulty,
+        'requested_slots': list(requested_slots or []),
         'mode': mode,
         'topic': topic,
         'avoid_prompts': list(recent_prompts or [])[:30],
@@ -303,7 +314,7 @@ def generate_with_gemini(mistakes, topic, count=SESSION_SIZE, mode='personalized
                 'correction': mistake.correction,
                 'explanation': mistake.explanation[:500],
             }
-            for mistake in mistakes[:5]
+            for mistake in mistakes[:3]
         ],
     }
     model_attempts = ((GEMINI_MODEL, 6000, 'gemini_primary'), (GEMINI_FALLBACK_MODEL, 4000, 'gemini_secondary'))
@@ -331,7 +342,7 @@ def generate_with_gemini(mistakes, topic, count=SESSION_SIZE, mode='personalized
             valid = []
             seen = set()
             for item in payload:
-                exercise = validate_generated_exercise(item, topic)
+                exercise = validate_generated_exercise(item, topic, 'medium' if difficulty == 'mixed' else difficulty)
                 if not exercise:
                     continue
                 key = fingerprint(exercise['exercise_type'], exercise['prompt'])
@@ -454,6 +465,34 @@ def fallback_exercises(topic, count=SESSION_SIZE, required_types=None):
     return result
 
 
+FALLBACK_CONTEXTS = (
+    'In a classroom exercise', 'For a travel journal', 'In a short email',
+    'During a team meeting', 'For a daily conversation', 'In a school project',
+    'At a community event', 'For a weekend plan', 'In a work update',
+    'During an English lesson', 'For a personal diary', 'In a friendly message',
+    'At a study group', 'For a short story', 'In an office conversation',
+    'During a family discussion', 'For a class assignment', 'In a news summary',
+    'At a local workshop', 'For a progress report', 'In a phone conversation',
+    'During a club activity', 'For an online post', 'In a simple narrative',
+)
+
+
+def prompt_template_signature(prompt):
+    value = re.sub(r'\s+', ' ', str(prompt or '')).strip()
+    personalized_contexts = tuple(
+        wrapper.split('{}', 1)[0].strip().rstrip(',:')
+        for wrappers in globals().get('PERSONALIZED_WRAPPERS', {}).values()
+        for wrapper in wrappers
+        if wrapper != '{}'
+    )
+    for context in (*FALLBACK_CONTEXTS, *personalized_contexts):
+        match = re.match(rf'^{re.escape(context)}\s*[:,]\s*', value, flags=re.IGNORECASE)
+        if match:
+            value = value[match.end():]
+            break
+    return fingerprint(normalize_answer(value))
+
+
 def prompt_similarity(left, right):
     def grams(value):
         words = re.findall(r"[a-z0-9']+", normalize_answer(value))
@@ -462,11 +501,16 @@ def prompt_similarity(left, right):
     return len(first & second) / max(1, len(first | second))
 
 
-def is_recent_prompt(prompt, recent_prompts):
-    return any(
-        fingerprint(prompt) == fingerprint(recent) or prompt_similarity(prompt, recent) >= 0.8
-        for recent in (recent_prompts or [])
-    )
+def is_recent_prompt(prompt, recent_prompts, compare_templates=False):
+    for index, recent in enumerate(recent_prompts or []):
+        if fingerprint(prompt) == fingerprint(recent) or prompt_similarity(prompt, recent) >= 0.8:
+            return True
+        # The first SESSION_SIZE prompts are the immediately preceding session.
+        # Ignore decorative fallback prefixes so the same underlying exercise
+        # cannot return in back-to-back sessions.
+        if compare_templates and index < SESSION_SIZE and prompt_template_signature(prompt) == prompt_template_signature(recent):
+            return True
+    return False
 
 
 def _varied_prompt(prompt, index):
@@ -481,17 +525,7 @@ def _varied_prompt(prompt, index):
     for source, choices in replacements:
         if source in varied:
             varied = varied.replace(source, choices[index % len(choices)])
-    contexts = (
-        'In a classroom exercise', 'For a travel journal', 'In a short email',
-        'During a team meeting', 'For a daily conversation', 'In a school project',
-        'At a community event', 'For a weekend plan', 'In a work update',
-        'During an English lesson', 'For a personal diary', 'In a friendly message',
-        'At a study group', 'For a short story', 'In an office conversation',
-        'During a family discussion', 'For a class assignment', 'In a news summary',
-        'At a local workshop', 'For a progress report', 'In a phone conversation',
-        'During a club activity', 'For an online post', 'In a simple narrative',
-    )
-    context = contexts[index % len(contexts)]
+    context = FALLBACK_CONTEXTS[index % len(FALLBACK_CONTEXTS)]
     if varied.lower().startswith(('choose ', 'which ', 'select ')):
         return f'{context}, {varied[0].lower()}{varied[1:]}'
     return f'{context}: {varied}'
@@ -511,7 +545,7 @@ def _fallback_candidates(topic):
     } for exercise_type, prompt, options, answer, explanation in bank]
 
 
-def dynamic_fallback_exercises(topic, count, required_types, recent_prompts=None):
+def dynamic_fallback_exercises(topic, count, required_types, recent_prompts=None, compare_templates=False):
     topic = topic if topic in FALLBACK_BANK else 'other_grammar'
     result = []
     targets = dict(required_types)
@@ -526,7 +560,10 @@ def dynamic_fallback_exercises(topic, count, required_types, recent_prompts=None
                 continue
             candidate = dict(item)
             candidate['prompt'] = _varied_prompt(item['prompt'], context_offset + round_index)
-            if is_recent_prompt(candidate['prompt'], recent_prompts) or is_recent_prompt(candidate['prompt'], [x['prompt'] for x in result]):
+            if (
+                is_recent_prompt(candidate['prompt'], recent_prompts, compare_templates) or
+                is_recent_prompt(candidate['prompt'], [x['prompt'] for x in result], compare_templates)
+            ):
                 continue
             result.append(candidate)
             targets[candidate['exercise_type']] -= 1
@@ -535,19 +572,257 @@ def dynamic_fallback_exercises(topic, count, required_types, recent_prompts=None
     return result
 
 
-def personalized_fallback_exercises(mistake, count, required_types, recent_prompts=None):
-    # The fine-grained concept is more reliable than the broad provider
-    # category (for example, a verb-tense issue may arrive as other_grammar).
-    topic = CONCEPT_TOPICS.get(mistake.concept_code)
-    if not topic:
-        topic = mistake.category if mistake.category in FALLBACK_BANK else normalize_topic(mistake.concept_code)
-    if topic not in FALLBACK_BANK:
-        topic = 'other_grammar'
-    exercises = dynamic_fallback_exercises(topic, count, required_types, recent_prompts)
-    for item in exercises:
-        item['category'] = topic
-        item['concept_code'] = mistake.concept_code
-    return exercises
+PERSONALIZED_WRAPPERS = {
+    'easy': (
+        '{}', 'In a short classroom example, {}', 'For a daily conversation, {}',
+        'In a simple note, {}', 'During a routine task, {}',
+    ),
+    'medium': (
+        'During the weekly review, {}', 'While the group checked its work, {}',
+        'In the update that arrived this morning, {}', 'Before the discussion ended, {}',
+        'As part of the project summary, {}',
+    ),
+    'hard': (
+        'Although the schedule had changed unexpectedly, {}',
+        'After everyone had reviewed the earlier notes, {}',
+        'Because the first explanation was incomplete, {}',
+        'While the details in the final report were being checked, {}',
+        'Even though several alternatives had been considered, {}',
+    ),
+}
+
+VERB_SEEDS = (
+    ('the editor', 'write', 'wrote', 'written', 'writes', 'writing', 'the summary'),
+    ('the guide', 'leave', 'left', 'left', 'leaves', 'leaving', 'the station'),
+    ('the team', 'take', 'took', 'taken', 'takes', 'taking', 'the final step'),
+    ('the student', 'see', 'saw', 'seen', 'sees', 'seeing', 'the result'),
+    ('the manager', 'choose', 'chose', 'chosen', 'chooses', 'choosing', 'a new approach'),
+    ('the visitor', 'go', 'went', 'gone', 'goes', 'going', 'to the information desk'),
+    ('the researcher', 'make', 'made', 'made', 'makes', 'making', 'a careful comparison'),
+    ('the speaker', 'begin', 'began', 'begun', 'begins', 'beginning', 'the presentation'),
+    ('the assistant', 'bring', 'brought', 'brought', 'brings', 'bringing', 'the requested file'),
+    ('the coordinator', 'send', 'sent', 'sent', 'sends', 'sending', 'the confirmation'),
+    ('the analyst', 'find', 'found', 'found', 'finds', 'finding', 'the missing detail'),
+    ('the instructor', 'give', 'gave', 'given', 'gives', 'giving', 'clear feedback'),
+)
+
+SVA_SEEDS = (
+    ('The list of revised items', 'is', ('are', 'were', 'be'), 'on the desk'),
+    ('Each of the new participants', 'has', ('have', 'having', 'are'), 'a numbered badge'),
+    ('The volunteers from the local center', 'work', ('works', 'working', 'has worked'), 'every Saturday'),
+    ('Neither of the proposed answers', 'seems', ('seem', 'seeming', 'have seemed'), 'complete'),
+    ('The quality of these materials', 'depends', ('depend', 'depending', 'have depended'), 'on careful storage'),
+    ('My colleagues in the design group', 'prefer', ('prefers', 'preferring', 'has preferred'), 'the second version'),
+    ('One of the main reasons', 'is', ('are', 'were', 'be'), 'explained below'),
+    ('The results of both experiments', 'show', ('shows', 'showing', 'has shown'), 'the same pattern'),
+    ('Every student and teacher', 'receives', ('receive', 'receiving', 'have received'), 'a safety guide'),
+    ('The information in those reports', 'remains', ('remain', 'remaining', 'have remained'), 'confidential'),
+    ('A series of short workshops', 'begins', ('begin', 'beginning', 'have begun'), 'next week'),
+    ('The players who joined yesterday', 'are', ('is', 'was', 'be'), 'ready to practise'),
+)
+
+ARTICLE_SEEDS = (
+    ('an', 'unusual idea', 'was discussed during the meeting'), ('an', 'online account', 'is required for registration'),
+    ('a', 'careful editor', 'noticed the inconsistency'), ('a', 'useful reference', 'was added to the guide'),
+    ('the', 'final version', 'that you approved is ready'), ('the', 'only entrance', 'to the building is locked'),
+    ('an', 'honest response', 'would be more helpful'), ('a', 'European researcher', 'presented the results'),
+    ('the', 'equipment in this room', 'must remain here'), ('a', 'one-page summary', 'would be enough'),
+    ('an', 'hour-long session', 'starts at noon'), ('the', 'first chapter', 'explains the main concept'),
+)
+
+PREPOSITION_SEEDS = (
+    ('at', 'The interview begins ___ 10:30 a.m.'), ('on', 'The revised schedule takes effect ___ Monday.'),
+    ('in', 'The conference will be held ___ September.'), ('for', 'They have worked on the project ___ three months.'),
+    ('since', 'The office has used this system ___ 2024.'), ('between', 'The responsibility is shared ___ the two departments.'),
+    ('among', 'The teacher divided the materials ___ five groups.'), ('by', 'The application must be submitted ___ Friday.'),
+    ('with', 'The conclusion is consistent ___ the available evidence.'), ('from', 'This approach differs ___ the earlier method.'),
+    ('into', 'The report is divided ___ four sections.'), ('during', 'No changes were made ___ the final review.'),
+)
+
+PRONOUN_SEEDS = (
+    ('me', 'The coordinator sent the revised schedule to Maya and ___.'),
+    ('I', 'Jordan and ___ will present the findings tomorrow.'),
+    ('themselves', 'The participants organized the event by ___.'),
+    ('ourselves', 'My colleague and I completed the final check by ___.'),
+    ('her', 'The new responsibility was assigned to ___.'),
+    ('they', 'The applicants said that ___ had submitted every document.'),
+    ('whom', 'The researcher to ___ you spoke has published the results.'),
+    ('whose', 'The student ___ project won the prize thanked the group.'),
+    ('it', 'The device stopped working, so the technician inspected ___.'),
+    ('their', 'Each team presented ___ solution to the panel.'),
+    ('himself', 'The author revised the entire chapter by ___.'),
+    ('us', 'The instructor gave ___ additional time to finish.'),
+)
+
+WORD_FORM_SEEDS = (
+    ('successfully', ('success', 'successful', 'succeed'), 'The team completed the complex task ___.'),
+    ('effective', ('effect', 'effectively', 'effectiveness'), 'The revised method proved highly ___.'),
+    ('decision', ('decide', 'decisive', 'deciding'), 'Their final ___ surprised the committee.'),
+    ('carefully', ('careful', 'care', 'carefulness'), 'The evidence must be examined ___.'),
+    ('reliable', ('rely', 'reliably', 'reliability'), 'We need a more ___ source of information.'),
+    ('improvement', ('improve', 'improved', 'improving'), 'The latest results show a clear ___.'),
+    ('persuasive', ('persuade', 'persuasively', 'persuasion'), 'She presented a highly ___ argument.'),
+    ('independently', ('independent', 'independence', 'depend'), 'The two reviewers worked ___.'),
+    ('accuracy', ('accurate', 'accurately', 'inaccurate'), 'The editor checked the ___ of every figure.'),
+    ('practical', ('practice', 'practically', 'practise'), 'The proposal offers a ___ solution.'),
+    ('unexpectedly', ('unexpected', 'expectation', 'expected'), 'The system stopped ___ during the test.'),
+    ('clarification', ('clarify', 'clear', 'clearly'), 'The final paragraph needs further ___.'),
+)
+
+STRUCTURE_SEEDS = (
+    ('although', '___ the evidence was limited, the team reached a careful conclusion.'),
+    ('because', 'The meeting was postponed ___ several key members were absent.'),
+    ('so that', 'The instructions were rewritten ___ new users could follow them easily.'),
+    ('whereas', 'The first method is quick, ___ the second is more accurate.'),
+    ('unless', 'The application will not be reviewed ___ every section is complete.'),
+    ('while', '___ one group collected the data, another checked the calculations.'),
+    ('therefore', 'The sample was too small; ___, the result was treated cautiously.'),
+    ('even though', '___ the deadline was close, the editor checked every reference.'),
+    ('after', '___ the final draft had been approved, the team prepared the presentation.'),
+    ('which', 'The report contains three recommendations, all of ___ require further testing.'),
+    ('but', 'The explanation was brief, ___ it addressed the central issue.'),
+    ('before', 'Please verify every figure ___ you submit the document.'),
+)
+
+OTHER_SEEDS = (
+    ('review', ('reviews', 'reviewed', 'to review'), 'You should ___ the instructions before starting.'),
+    ('working', ('work', 'to work', 'worked'), 'The team enjoys ___ on practical problems.'),
+    ('are', ('is', 'be', 'has'), 'There ___ several reasons to revise the proposal.'),
+    ('to complete', ('complete', 'completing', 'completed'), 'The group expects ___ the work tomorrow.'),
+    ('used to', ('use to', 'was use to', 'using to'), 'The office ___ keep paper records.'),
+    ('be checked', ('check', 'checking', 'checked'), 'Every reference must ___ before publication.'),
+    ('had better', ('would better', 'has better', 'better to'), 'You ___ save a copy before closing the file.'),
+    ('reading', ('read', 'to reading', 'reads'), 'She suggested ___ the instructions again.'),
+    ('are being', ('is being', 'were', 'have'), 'The final documents ___ reviewed right now.'),
+    ('could have', ('could', 'can have', 'has'), 'They ___ avoided the delay by checking earlier.'),
+    ('not only', ('neither', 'either', 'both'), 'The update is ___ faster but also more reliable.'),
+    ('whether', ('if or', 'that whether', 'which'), 'We need to decide ___ the change is necessary.'),
+)
+
+
+def _four_options(answer, distractors):
+    values = [answer, *distractors]
+    result = []
+    for value in values:
+        if normalize_answer(value) not in {normalize_answer(item) for item in result}:
+            result.append(value)
+    fillers = ('does', 'did', 'being', 'to do')
+    for filler in fillers:
+        if len(result) >= 4:
+            break
+        if normalize_answer(filler) not in {normalize_answer(item) for item in result}:
+            result.append(filler)
+    return result[:4]
+
+
+def _wrap_personalized_prompt(prompt, difficulty, index):
+    wrapper = PERSONALIZED_WRAPPERS[difficulty][index % len(PERSONALIZED_WRAPPERS[difficulty])]
+    if wrapper == '{}':
+        return prompt
+    lowered = prompt[0].lower() + prompt[1:] if prompt else prompt
+    return wrapper.format(lowered)
+
+
+def _personalized_seed_item(concept, exercise_type, difficulty, index):
+    topic = CONCEPT_TOPICS.get(concept, concept if concept in TOPICS else 'other_grammar')
+    if topic == 'verb_tense':
+        subject, base, past, participle, third, gerund, complement = VERB_SEEDS[index % len(VERB_SEEDS)]
+        if concept == 'present_perfect':
+            answer, prompt, distractors = participle, f'{subject.capitalize()} has ___ {complement}.', (base, past, gerund)
+            explanation = f'Sau “has” cần quá khứ phân từ; “{participle}” là V3 của “{base}”.'
+        elif concept == 'present_continuous':
+            answer, prompt, distractors = gerund, f'{subject.capitalize()} is ___ {complement} now.', (base, past, third)
+            explanation = f'Hiện tại tiếp diễn dùng “is + V-ing”, nên chọn “{gerund}”.'
+        elif concept == 'past_continuous':
+            answer, prompt, distractors = gerund, f'{subject.capitalize()} was ___ {complement} when the call arrived.', (base, past, participle)
+            explanation = f'Quá khứ tiếp diễn dùng “was + V-ing”, nên chọn “{gerund}”.'
+        elif concept == 'future_forms':
+            answer, prompt, distractors = base, f'{subject.capitalize()} will ___ {complement} tomorrow.', (past, third, gerund)
+            explanation = f'Sau “will” dùng động từ nguyên mẫu “{base}”.'
+        elif concept == 'present_simple':
+            answer, prompt, distractors = third, f'{subject.capitalize()} usually ___ {complement}.', (base, past, gerund)
+            explanation = f'Chủ ngữ số ít trong hiện tại đơn dùng “{third}”.'
+        else:
+            answer, prompt, distractors = past, f'Last week, {subject} ___ {complement}.', (base, third, gerund)
+            explanation = f'“Last week” yêu cầu quá khứ đơn; dạng đúng là “{past}”.'
+        hint = base
+        seed_id = f'verb-{concept}-{index % len(VERB_SEEDS)}'
+    elif topic == 'subject_verb_agreement':
+        subject, answer, distractors, complement = SVA_SEEDS[index % len(SVA_SEEDS)]
+        prompt, hint = f'{subject} ___ {complement}.', answer.rstrip('s') or answer
+        explanation = f'Dạng “{answer}” hòa hợp với chủ ngữ “{subject}”.'
+        seed_id = f'sva-{index % len(SVA_SEEDS)}'
+    elif topic == 'articles':
+        answer, noun, complement = ARTICLE_SEEDS[index % len(ARTICLE_SEEDS)]
+        prompt, hint, distractors = f'___ {noun.capitalize()} {complement}.', 'article', ('a', 'an', 'the', 'no article')
+        explanation = f'Dùng “{answer}” trước cụm danh từ “{noun}” trong ngữ cảnh này.'
+        seed_id = f'article-{index % len(ARTICLE_SEEDS)}'
+    elif topic == 'prepositions':
+        answer, prompt = PREPOSITION_SEEDS[index % len(PREPOSITION_SEEDS)]
+        hint, distractors = 'preposition', ('at', 'on', 'in', 'for', 'since', 'by')
+        explanation = f'Giới từ phù hợp với cụm từ trong câu là “{answer}”.'
+        seed_id = f'prep-{index % len(PREPOSITION_SEEDS)}'
+    elif topic == 'pronouns':
+        answer, prompt = PRONOUN_SEEDS[index % len(PRONOUN_SEEDS)]
+        hint, distractors = 'pronoun', ('I', 'me', 'my', 'mine', 'they', 'them', 'their', 'themselves')
+        explanation = f'Vị trí và vai trò trong câu yêu cầu đại từ “{answer}”.'
+        seed_id = f'pronoun-{index % len(PRONOUN_SEEDS)}'
+    elif topic == 'word_form':
+        answer, distractors, prompt = WORD_FORM_SEEDS[index % len(WORD_FORM_SEEDS)]
+        hint = re.sub(r'(ly|ness|ment|ive|al|ful)$', '', answer) or answer
+        explanation = f'Cấu trúc câu yêu cầu đúng từ loại của “{answer}”.'
+        seed_id = f'word-form-{index % len(WORD_FORM_SEEDS)}'
+    elif topic == 'sentence_structure':
+        answer, prompt = STRUCTURE_SEEDS[index % len(STRUCTURE_SEEDS)]
+        hint, distractors = 'conjunction', ('and', 'but', 'because', 'although', 'therefore', 'unless')
+        explanation = f'Quan hệ giữa các mệnh đề yêu cầu từ nối “{answer}”.'
+        seed_id = f'structure-{index % len(STRUCTURE_SEEDS)}'
+    else:
+        answer, distractors, prompt = OTHER_SEEDS[index % len(OTHER_SEEDS)]
+        hint = answer.split()[-1] if len(answer.split()) == 1 else answer
+        explanation = f'Cấu trúc ngữ pháp trong câu yêu cầu “{answer}”.'
+        seed_id = f'other-{index % len(OTHER_SEEDS)}'
+
+    prompt = _wrap_personalized_prompt(prompt, difficulty, index // 2)
+    options = [] if exercise_type == 'fill_blank' else _four_options(answer, distractors)
+    return {
+        'exercise_type': exercise_type,
+        'category': topic,
+        'concept_code': concept,
+        'difficulty': difficulty,
+        'prompt': prompt,
+        'hint': hint if exercise_type == 'fill_blank' else '',
+        'options': options,
+        'accepted_answers': [answer],
+        'explanation': explanation,
+        # Deliberately exclude the decorative wrapper. Changing only a prefix
+        # must never turn the same grammar frame into a new exercise.
+        'generation_key': fingerprint(concept, difficulty, exercise_type, seed_id),
+    }
+
+
+def personalized_fallback_exercises(mistake, slots, recent_prompts=None, recent_generation_keys=None):
+    recent_generation_keys = set(recent_generation_keys or [])
+    result = []
+    for slot_index, slot in enumerate(slots):
+        found = None
+        for attempt in range(160):
+            candidate = _personalized_seed_item(
+                mistake.concept_code,
+                slot['exercise_type'],
+                slot['difficulty'],
+                slot_index + attempt,
+            )
+            if candidate['generation_key'] in recent_generation_keys:
+                continue
+            if is_recent_prompt(candidate['prompt'], [*(recent_prompts or []), *[item['prompt'] for item in result]]):
+                continue
+            found = candidate
+            break
+        if found:
+            result.append(found)
+            recent_generation_keys.add(found['generation_key'])
+    return result
 
 
 def general_fallback_exercises(difficulty, count, required_types, recent_prompts=None):
@@ -564,7 +839,13 @@ def general_fallback_exercises(difficulty, count, required_types, recent_prompts
         needed = sum(targets.values())
         if not needed:
             break
-        candidates = dynamic_fallback_exercises(topic, needed, targets, [*(recent_prompts or []), *[x['prompt'] for x in result]])
+        candidates = dynamic_fallback_exercises(
+            topic,
+            needed,
+            targets,
+            [*(recent_prompts or []), *[x['prompt'] for x in result]],
+            compare_templates=True,
+        )
         for item in candidates:
             if targets.get(item['exercise_type'], 0) <= 0:
                 continue

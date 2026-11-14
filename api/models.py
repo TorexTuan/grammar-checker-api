@@ -91,6 +91,7 @@ class PracticeExercise(models.Model):
     explanation = models.TextField()
     source = models.CharField(max_length=32)
     fingerprint = models.CharField(max_length=64)
+    generation_key = models.CharField(max_length=128, blank=True, default='', db_index=True)
     used_count = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
 

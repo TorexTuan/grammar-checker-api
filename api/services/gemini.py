@@ -151,6 +151,44 @@ def _subject_explanation_lead(subject, subject_number):
     return f'Chủ ngữ “{subject}” là {subject_number}, nên '
 
 
+def _compound_subject_pronoun_change(original, replacement):
+    original_value = re.sub(r'\s+', ' ', str(original or '')).strip()
+    replacement_value = re.sub(r'\s+', ' ', str(replacement or '')).strip()
+    original_match = re.fullmatch(
+        r"me\s+and\s+(.+?)\s+([A-Za-z][\w'’-]*)",
+        original_value,
+        flags=re.IGNORECASE,
+    )
+    replacement_match = re.fullmatch(
+        r"(.+?)\s+and\s+I\s+([A-Za-z][\w'’-]*)",
+        replacement_value,
+        flags=re.IGNORECASE,
+    )
+    if not original_match or not replacement_match:
+        return None
+    other_subject = original_match.group(1).strip()
+    if other_subject.casefold() != replacement_match.group(1).strip().casefold():
+        return None
+    original_verb = original_match.group(2)
+    replacement_verb = replacement_match.group(2)
+    if original_verb.casefold().endswith('ies'):
+        verb_base = original_verb[:-3] + 'y'
+    elif original_verb.casefold().endswith(('ches', 'shes', 'sses', 'xes', 'zes', 'oes')):
+        verb_base = original_verb[:-2]
+    elif original_verb.casefold().endswith('s'):
+        verb_base = original_verb[:-1]
+    else:
+        verb_base = original_verb
+    return {
+        'incorrect_subject': f'me and {other_subject}',
+        'correct_subject': f'{other_subject} and I',
+        'other_subject': other_subject,
+        'original_verb': original_verb,
+        'replacement_verb': replacement_verb,
+        'verb_base': verb_base,
+    }
+
+
 def _verb_form(value):
     normalized = _normalized_word(value)
     if normalized in IRREGULAR_VERB_FORMS:
@@ -204,6 +242,9 @@ def _grammar_facts(issue, text=''):
         'replacement_form': _verb_form(issue.get('replacement')) or {},
         'temporal_expression': temporal_expression,
         'temporal_kind': temporal_kind,
+        'compound_subject_pronoun_change': _compound_subject_pronoun_change(
+            issue.get('original'), issue.get('replacement'),
+        ) or {},
     }
 
 
@@ -219,6 +260,15 @@ def _specific_explanation(explanation, issue, text=''):
     original_word = _normalized_word(issue.get('original'))
     replacement_word = _normalized_word(issue.get('replacement'))
     facts = _grammar_facts(issue, text)
+    compound_subject_change = facts['compound_subject_pronoun_change']
+    if compound_subject_change:
+        if not all(marker in normalized for marker in ('đại từ chủ ngữ', 'đại từ tân ngữ')):
+            return False
+        if compound_subject_change['correct_subject'].casefold() not in normalized:
+            return False
+        time_cue = facts['time_cue'].casefold()
+        if time_cue and (time_cue not in normalized or 'quá khứ đơn' not in normalized):
+            return False
     if {original_word, replacement_word} == {'has', 'have'}:
         subject = facts['subject'].casefold()
         if subject and subject not in normalized:
@@ -308,6 +358,24 @@ def _contextual_fallback_explanation(issue, text=''):
     auxiliary = _preceding_perfect_auxiliary(prefix)
     replacement_form = _verb_form(replacement)
     original_form = _verb_form(original)
+    compound_subject_change = _compound_subject_pronoun_change(original, replacement)
+
+    if compound_subject_change:
+        incorrect_subject = compound_subject_change['incorrect_subject']
+        correct_subject = compound_subject_change['correct_subject']
+        explanation = (
+            change + f'Trong câu này, “{incorrect_subject}” giữ vai trò chủ ngữ, nên phải dùng '
+            f'đại từ chủ ngữ “I”, không dùng đại từ tân ngữ “me”. Khi nói về bản thân cùng người khác, '
+            f'đặt người còn lại trước thành “{correct_subject}”. '
+        )
+        cue = _past_time_cue(sentence)
+        if cue:
+            explanation += (
+                f'Dấu hiệu “{cue}” cho biết hành động đã xảy ra và kết thúc trong quá khứ, nên dùng '
+                f'thì quá khứ đơn. “{compound_subject_change["replacement_verb"]}” là dạng quá khứ '
+                f'của “{compound_subject_change["verb_base"]}”.'
+            )
+        return explanation
 
     if {original_word, replacement_word} == {'has', 'have'}:
         subject, subject_number = _subject_before(prefix)
