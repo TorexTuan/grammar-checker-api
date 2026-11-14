@@ -21,6 +21,7 @@ from .services.assessment import (
     assess_text_quality,
 )
 from .services.gemini import explain_issues_in_vietnamese
+from .services.practice import enrich_practice_issues, record_detected_mistakes
 from .services.sapling import (
     MAX_AUTOCOMPLETE_QUERY_LENGTH,
     MAX_REPHRASE_TEXT_LENGTH,
@@ -284,6 +285,11 @@ def check_grammar(request):
     """Detect edits with Sapling and explain them in Vietnamese with Gemini."""
     text = request.data.get('text', '')
     language = request.data.get('language', 'en-US')
+    capture_practice = request.data.get('capture_practice') is True
+    excluded_fingerprints = request.data.get('excluded_practice_fingerprints', [])
+    if not isinstance(excluded_fingerprints, list):
+        excluded_fingerprints = []
+    excluded_fingerprints = [str(value) for value in excluded_fingerprints[:500]]
     if not isinstance(text, str) or not text.strip():
         return Response(
             {'error': 'Invalid text format. Expected a non-empty string.'},
@@ -317,12 +323,21 @@ def check_grammar(request):
         else:
             explained_count = 0
 
+        enrich_practice_issues(issues, text)
+        recorded_count = 0
+        if capture_practice and request.user.is_authenticated:
+            try:
+                recorded_count = record_detected_mistakes(request.user, issues, excluded_fingerprints)
+            except Exception as exc:
+                print(f'[Practice Capture Warning]: {exc}')
+
         return Response({
             'success': True,
             'total_issues': len(issues),
             'sources': {
                 'sapling': len(issues),
                 'gemini_explained': explained_count,
+                'practice_recorded': recorded_count,
             },
             'issues': issues,
         })

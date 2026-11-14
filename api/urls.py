@@ -3,6 +3,14 @@ from rest_framework.routers import DefaultRouter
 
 from .auth_views import csrf_token, login_view, logout_view, me, register
 from .document_views import DocumentViewSet
+from .practice_views import (
+    answer_practice_session,
+    create_practice_session,
+    practice_overview,
+    practice_progress,
+    record_mistake,
+    retrieve_practice_session,
+)
 from .views import (
     accept_autocomplete,
     ai_detect,
@@ -29,5 +37,11 @@ urlpatterns = [
     path('auth/login/', login_view, name='auth-login'),
     path('auth/logout/', logout_view, name='auth-logout'),
     path('auth/me/', me, name='auth-me'),
+    path('practice/mistakes/', record_mistake, name='practice-mistakes'),
+    path('practice/overview/', practice_overview, name='practice-overview'),
+    path('practice/progress/', practice_progress, name='practice-progress'),
+    path('practice/sessions/', create_practice_session, name='practice-sessions'),
+    path('practice/sessions/<uuid:session_id>/', retrieve_practice_session, name='practice-session-detail'),
+    path('practice/sessions/<uuid:session_id>/answer/', answer_practice_session, name='practice-session-answer'),
     path('', include(router.urls)),
 ]
