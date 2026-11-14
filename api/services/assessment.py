@@ -6,7 +6,7 @@ from google.genai import types
 from .gemini import get_gemini_client
 
 
-ASSESSMENT_MODEL = 'gemini-3.5-flash-lite'
+ASSESSMENT_MODELS = ('gemini-3.5-flash-lite', 'gemini-3.8-flash')
 CRITERIA = ('grammar', 'clarity', 'coherence', 'vocabulary')
 
 
@@ -55,6 +55,19 @@ def _is_timeout_error(exc):
         or 'deadline expired' in message
         or '504' in message
     )
+
+
+def _is_retryable_model_error(exc):
+    message = str(exc).lower()
+    return any(marker in message for marker in (
+        '429',
+        '500',
+        '503',
+        '504',
+        'high demand',
+        'resource_exhausted',
+        'unavailable',
+    ))
 
 
 def _normalize_score(value, field):
@@ -120,26 +133,37 @@ def assess_text_quality(text, language='en-US'):
         raise AssessmentError('GEMINI_API_KEY is not configured.')
 
     request_payload = {'language': language, 'text': text}
-    try:
-        response = client.models.generate_content(
-            model=ASSESSMENT_MODEL,
-            contents=json.dumps(request_payload, ensure_ascii=False),
-            config=types.GenerateContentConfig(
-                system_instruction=SYSTEM_PROMPT,
-                response_mime_type='application/json',
-                temperature=0.1,
-                thinking_config=types.ThinkingConfig(
-                    thinking_level=types.ThinkingLevel.LOW,
+    for index, model in enumerate(ASSESSMENT_MODELS):
+        has_fallback = index < len(ASSESSMENT_MODELS) - 1
+        try:
+            response = client.models.generate_content(
+                model=model,
+                contents=json.dumps(request_payload, ensure_ascii=False),
+                config=types.GenerateContentConfig(
+                    system_instruction=SYSTEM_PROMPT,
+                    response_mime_type='application/json',
+                    temperature=0.1,
+                    thinking_config=types.ThinkingConfig(
+                        thinking_level=types.ThinkingLevel.LOW,
+                    ),
                 ),
-            ),
-        )
-    except Exception as exc:
-        if _is_timeout_error(exc):
-            raise AssessmentTimeout('Gemini assessment request timed out.') from exc
-        raise AssessmentError('Gemini assessment request failed.') from exc
+            )
+            try:
+                payload = json.loads((response.text or '').strip())
+            except (TypeError, ValueError, AttributeError) as exc:
+                raise InvalidAssessmentResponse('Gemini returned invalid JSON.') from exc
+            return normalize_assessment(payload)
+        except InvalidAssessmentResponse as exc:
+            print(f'[Gemini Assessment Invalid Response] {model}: {exc}')
+            if has_fallback:
+                continue
+            raise
+        except Exception as exc:
+            print(f'[Gemini Assessment Warning] {model}: {exc}')
+            if has_fallback and (_is_timeout_error(exc) or _is_retryable_model_error(exc)):
+                continue
+            if _is_timeout_error(exc):
+                raise AssessmentTimeout('Gemini assessment request timed out.') from exc
+            raise AssessmentError('Gemini assessment request failed.') from exc
 
-    try:
-        payload = json.loads((response.text or '').strip())
-    except (TypeError, ValueError, AttributeError) as exc:
-        raise InvalidAssessmentResponse('Gemini returned invalid JSON.') from exc
-    return normalize_assessment(payload)
+    raise AssessmentError('Gemini assessment request failed.')

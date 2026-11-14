@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -66,6 +67,22 @@ class AssessmentServiceTests(SimpleTestCase):
         get_client.return_value = client
         with self.assertRaises(InvalidAssessmentResponse):
             assess_text_quality('word ' * 20)
+
+    @patch('api.services.assessment.get_gemini_client')
+    def test_falls_back_when_primary_model_is_unavailable(self, get_client):
+        client = Mock()
+        client.models.generate_content.side_effect = [
+            RuntimeError('503 UNAVAILABLE: high demand'),
+            SimpleNamespace(text=json.dumps(valid_payload())),
+        ]
+        get_client.return_value = client
+
+        result = assess_text_quality('word ' * 20)
+
+        self.assertEqual(result['overall_score'], 78)
+        self.assertEqual(client.models.generate_content.call_count, 2)
+        called_models = [call.kwargs['model'] for call in client.models.generate_content.call_args_list]
+        self.assertEqual(called_models, ['gemini-3.5-flash-lite', 'gemini-3.8-flash'])
 
 
 class AssessmentApiTests(APITestCase):
