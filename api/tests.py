@@ -1,6 +1,7 @@
 from django.contrib.auth import get_user_model
 from django.urls import reverse
 from rest_framework import status
+from rest_framework.authtoken.models import Token
 from rest_framework.test import APIClient, APITestCase
 
 from .models import Document
@@ -29,42 +30,40 @@ class AuthApiTests(APITestCase):
         token = response.json()['csrfToken']
         self.client.credentials(HTTP_X_CSRFTOKEN=token)
 
-    def test_register_login_me_and_logout(self):
-        self.csrf()
+    def test_register_login_me_and_logout_with_token(self):
         response = self.client.post(reverse('auth-register'), {
             'email': 'Writer@Example.com',
             'password': 'StrongPass!2026',
         }, format='json')
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.json()['user']['email'], 'writer@example.com')
+        token = response.json()['token']
+        self.client.credentials(HTTP_AUTHORIZATION=f'Token {token}')
         self.assertIsNotNone(self.client.get(reverse('auth-me')).json()['user'])
+        document = self.client.post('/api/documents/', {
+            'title': 'Safari document', 'content': DOC, 'comments': [],
+        }, format='json')
+        self.assertEqual(document.status_code, status.HTTP_201_CREATED)
 
-        self.csrf()
         response = self.client.post(reverse('auth-logout'), {}, format='json')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(Token.objects.filter(key=token).exists())
+        self.client.credentials()
         self.assertIsNone(self.client.get(reverse('auth-me')).json()['user'])
 
-        self.csrf()
         response = self.client.post(reverse('auth-login'), {
             'email': 'WRITER@example.com',
             'password': 'StrongPass!2026',
         }, format='json')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.json()['token'])
 
-    def test_register_requires_csrf_and_unique_email(self):
-        response = self.client.post(reverse('auth-register'), {
-            'email': 'writer@example.com',
-            'password': 'StrongPass!2026',
-        }, format='json')
-        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
-
-        self.csrf()
+    def test_register_rejects_duplicate_email(self):
         first = self.client.post(reverse('auth-register'), {
             'email': 'writer@example.com',
             'password': 'StrongPass!2026',
         }, format='json')
         self.assertEqual(first.status_code, status.HTTP_201_CREATED)
-        self.csrf()
         duplicate = self.client.post(reverse('auth-register'), {
             'email': 'WRITER@example.com',
             'password': 'StrongPass!2026',

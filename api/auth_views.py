@@ -1,13 +1,15 @@
 import json
 
-from django.contrib.auth import authenticate, get_user_model, login, logout
+from django.contrib.auth import authenticate, get_user_model, logout
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
 from django.http import JsonResponse
 from django.middleware.csrf import get_token
-from django.views.decorators.csrf import csrf_protect, ensure_csrf_cookie
-from django.views.decorators.http import require_GET, require_POST
+from django.views.decorators.csrf import ensure_csrf_cookie
+from rest_framework.authtoken.models import Token
+from rest_framework.decorators import api_view, authentication_classes, permission_classes
+from rest_framework.permissions import AllowAny, IsAuthenticated
 
 
 User = get_user_model()
@@ -29,14 +31,17 @@ def _normalize_email(value):
     return User.objects.normalize_email(value.strip()).lower()
 
 
-@require_GET
+@api_view(['GET'])
+@authentication_classes([])
+@permission_classes([AllowAny])
 @ensure_csrf_cookie
 def csrf_token(request):
     return JsonResponse({'csrfToken': get_token(request)})
 
 
-@require_POST
-@csrf_protect
+@api_view(['POST'])
+@authentication_classes([])
+@permission_classes([AllowAny])
 def register(request):
     data = _json_body(request)
     if data is None:
@@ -64,12 +69,13 @@ def register(request):
         return JsonResponse({'errors': errors}, status=400)
 
     user = User.objects.create_user(username=email, email=email, password=password)
-    login(request, user)
-    return JsonResponse({'user': _user_payload(user)}, status=201)
+    token = Token.objects.create(user=user)
+    return JsonResponse({'user': _user_payload(user), 'token': token.key}, status=201)
 
 
-@require_POST
-@csrf_protect
+@api_view(['POST'])
+@authentication_classes([])
+@permission_classes([AllowAny])
 def login_view(request):
     data = _json_body(request)
     if data is None:
@@ -81,18 +87,21 @@ def login_view(request):
         return JsonResponse({'error': 'Invalid email or password.'}, status=400)
     if not user.is_active:
         return JsonResponse({'error': 'This account is disabled.'}, status=403)
-    login(request, user)
-    return JsonResponse({'user': _user_payload(user)})
+    token, _ = Token.objects.get_or_create(user=user)
+    return JsonResponse({'user': _user_payload(user), 'token': token.key})
 
 
-@require_POST
-@csrf_protect
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
 def logout_view(request):
+    if isinstance(request.auth, Token):
+        request.auth.delete()
     logout(request)
     return JsonResponse({}, status=200)
 
 
-@require_GET
+@api_view(['GET'])
+@permission_classes([AllowAny])
 def me(request):
     return JsonResponse({'user': _user_payload(request.user) if request.user.is_authenticated else None})
 
