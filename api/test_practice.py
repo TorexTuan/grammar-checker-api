@@ -14,6 +14,7 @@ from .services.practice import (
     VERB_SEEDS,
     _personalized_seed_item,
     generate_with_gemini,
+    infinitive_hint,
     prompt_template_signature,
 )
 
@@ -35,6 +36,14 @@ class PracticeApiTests(APITestCase):
             'correction': 'goes',
             'explanation': 'Chủ ngữ số ít cần động từ thêm s.',
         }
+
+    def test_subject_verb_hint_uses_the_infinitive(self):
+        self.assertEqual(infinitive_hint('has'), 'have')
+        self.assertEqual(infinitive_hint('is'), 'be')
+        self.assertEqual(infinitive_hint('does'), 'do')
+        self.assertEqual(infinitive_hint('studies'), 'study')
+        self.assertEqual(infinitive_hint('watches'), 'watch')
+        self.assertEqual(infinitive_hint('works'), 'work')
 
     def test_records_and_deduplicates_private_mistakes(self):
         first = self.client.post('/api/practice/mistakes/', self.mistake_payload(), format='json')

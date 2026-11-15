@@ -25,6 +25,7 @@ from .services.practice import (
     fingerprint,
     general_fallback_exercises,
     generate_with_gemini,
+    infinitive_hint,
     is_recent_prompt,
     normalize_answer,
     normalize_topic,
@@ -160,6 +161,10 @@ def practice_overview(request):
 
 def _public_item(item):
     exercise = item.exercise
+    hint = exercise.hint if exercise.exercise_type == PracticeExercise.TYPE_FILL_BLANK else ''
+    if exercise.category == 'subject_verb_agreement' and exercise.accepted_answers:
+        # Repair older rows where stripping the final "s" changed "has" into "ha".
+        hint = infinitive_hint(exercise.accepted_answers[0])
     result = {
         'item_id': str(item.id),
         'exercise_id': str(exercise.id),
@@ -169,7 +174,7 @@ def _public_item(item):
         'category_label': exercise.mistake.concept_label if exercise.mistake_id else TOPICS.get(exercise.category, TOPICS['other_grammar']),
         'difficulty': exercise.difficulty,
         'prompt': exercise.prompt,
-        'hint': exercise.hint if exercise.exercise_type == PracticeExercise.TYPE_FILL_BLANK else '',
+        'hint': hint,
         'options': exercise.options if exercise.exercise_type == PracticeExercise.TYPE_MULTIPLE_CHOICE else [],
         'answered': item.is_correct is not None,
         'user_answer': item.user_answer if item.is_correct is not None else '',

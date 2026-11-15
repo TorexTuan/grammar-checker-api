@@ -77,6 +77,26 @@ def normalize_answer(value):
     return re.sub(r'\s+', ' ', str(value or '')).strip().casefold()
 
 
+def infinitive_hint(value):
+    """Return a useful base-form hint for subject-verb agreement exercises."""
+    verb = str(value or '').strip()
+    lowered = verb.casefold()
+    irregular = {
+        'am': 'be', 'is': 'be', 'are': 'be', 'was': 'be', 'were': 'be',
+        'has': 'have', 'had': 'have',
+        'does': 'do', 'did': 'do',
+    }
+    if lowered in irregular:
+        return irregular[lowered]
+    if lowered.endswith('ies') and len(verb) > 3:
+        return f'{verb[:-3]}y'
+    if lowered.endswith(('ches', 'shes', 'sses', 'xes', 'zes', 'oes')):
+        return verb[:-2]
+    if lowered.endswith('s') and not lowered.endswith('ss'):
+        return verb[:-1]
+    return verb
+
+
 def fingerprint(*values):
     normalized = '|'.join(normalize_answer(value) for value in values)
     return hashlib.sha256(normalized.encode('utf-8')).hexdigest()
@@ -749,7 +769,7 @@ def _personalized_seed_item(concept, exercise_type, difficulty, index):
         seed_id = f'verb-{concept}-{index % len(VERB_SEEDS)}'
     elif topic == 'subject_verb_agreement':
         subject, answer, distractors, complement = SVA_SEEDS[index % len(SVA_SEEDS)]
-        prompt, hint = f'{subject} ___ {complement}.', answer.rstrip('s') or answer
+        prompt, hint = f'{subject} ___ {complement}.', infinitive_hint(answer)
         explanation = f'Dạng “{answer}” hòa hợp với chủ ngữ “{subject}”.'
         seed_id = f'sva-{index % len(SVA_SEEDS)}'
     elif topic == 'articles':
