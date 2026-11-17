@@ -13,6 +13,7 @@ from .services.practice import classify_concept, enrich_practice_issues, record_
 from .services.practice import (
     VERB_SEEDS,
     _personalized_seed_item,
+    general_fallback_exercises,
     generate_with_gemini,
     infinitive_hint,
     prompt_template_signature,
@@ -44,6 +45,21 @@ class PracticeApiTests(APITestCase):
         self.assertEqual(infinitive_hint('studies'), 'study')
         self.assertEqual(infinitive_hint('watches'), 'watch')
         self.assertEqual(infinitive_hint('works'), 'work')
+
+    def test_general_bank_covers_diverse_grammar_categories(self):
+        exercises = general_fallback_exercises(
+            'medium', 10, {'multiple_choice': 6, 'fill_blank': 4}, []
+        )
+        categories = {item['category'] for item in exercises}
+        advanced = {
+            'modals', 'conditionals', 'passive_voice', 'reported_speech',
+            'gerunds_infinitives', 'relative_clauses', 'comparisons', 'quantifiers',
+        }
+        self.assertEqual(len(exercises), 10)
+        self.assertGreaterEqual(len(categories), 8)
+        self.assertGreaterEqual(len(categories & advanced), 4)
+        self.assertEqual(sum(item['exercise_type'] == 'multiple_choice' for item in exercises), 6)
+        self.assertEqual(sum(item['exercise_type'] == 'fill_blank' for item in exercises), 4)
 
     def test_records_and_deduplicates_private_mistakes(self):
         first = self.client.post('/api/practice/mistakes/', self.mistake_payload(), format='json')
@@ -306,6 +322,12 @@ class PracticeApiTests(APITestCase):
             self.assertNotIn('explanation', item)
             if item['exercise_type'] == 'fill_blank':
                 self.assertTrue(item['hint'])
+                self.assertGreaterEqual(len(item['hint_levels']), 2)
+                fill_exercise = PracticeExercise.objects.get(id=item['exercise_id'])
+                self.assertNotIn(
+                    fill_exercise.accepted_answers[0].casefold(),
+                    {hint.casefold() for hint in item['hint_levels']},
+                )
 
         item = created.data['items'][0]
         exercise = PracticeExercise.objects.get(id=item['exercise_id'])

@@ -111,9 +111,12 @@ class AiDetectorApiTests(APITestCase):
     def tearDown(self):
         cache.clear()
 
-    def test_requires_authentication(self):
+    @patch('api.views.detect_ai_text', return_value=DETECTION)
+    def test_allows_anonymous_users(self, detect):
         response = self.client.post('/api/ai-detect/', {'text': TEXT}, format='json')
-        self.assertIn(response.status_code, (401, 403))
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.data['success'])
+        detect.assert_called_once_with(TEXT)
 
     @patch('api.views.detect_ai_text', return_value=DETECTION)
     def test_returns_normalized_result_for_authenticated_user(self, detect):
@@ -126,16 +129,21 @@ class AiDetectorApiTests(APITestCase):
 
     @patch('api.views.detect_ai_text', return_value=DETECTION)
     def test_validates_character_limits_before_provider_call(self, detect):
-        self.client.force_authenticate(self.user)
-        short = self.client.post('/api/ai-detect/', {'text': 'a' * 299}, format='json')
+        short = self.client.post('/api/ai-detect/', {'text': 'a' * 99}, format='json')
         long = self.client.post('/api/ai-detect/', {'text': 'a' * 10001}, format='json')
         self.assertEqual(short.status_code, 400)
         self.assertEqual(long.status_code, 400)
         detect.assert_not_called()
 
     @patch('api.views.detect_ai_text', return_value=DETECTION)
-    def test_throttles_after_ten_requests_per_hour(self, detect):
-        self.client.force_authenticate(self.user)
+    def test_accepts_exactly_one_hundred_characters(self, detect):
+        text = 'a' * 100
+        response = self.client.post('/api/ai-detect/', {'text': text}, format='json')
+        self.assertEqual(response.status_code, 200)
+        detect.assert_called_once_with(text)
+
+    @patch('api.views.detect_ai_text', return_value=DETECTION)
+    def test_throttles_anonymous_users_after_ten_requests_per_hour(self, detect):
         statuses = [
             self.client.post('/api/ai-detect/', {'text': TEXT}, format='json').status_code
             for _ in range(11)

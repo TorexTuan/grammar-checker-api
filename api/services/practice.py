@@ -19,6 +19,14 @@ TOPICS = {
     'pronouns': 'Pronouns',
     'word_form': 'Word forms',
     'sentence_structure': 'Sentence structure',
+    'modals': 'Modal verbs',
+    'conditionals': 'Conditionals',
+    'passive_voice': 'Passive voice',
+    'reported_speech': 'Reported speech',
+    'gerunds_infinitives': 'Gerunds & infinitives',
+    'relative_clauses': 'Relative clauses',
+    'comparisons': 'Comparatives & superlatives',
+    'quantifiers': 'Quantifiers',
     'spelling_punctuation': 'Spelling & punctuation',
     'other_grammar': 'Other grammar',
 }
@@ -36,6 +44,11 @@ CONCEPT_LABELS = {
     'articles': 'Articles & determiners', 'prepositions': 'Prepositions',
     'pronouns': 'Pronouns', 'word_form': 'Word forms',
     'sentence_structure': 'Sentence structure', 'other_grammar': 'Other grammar',
+    'modals': 'Modal verbs', 'conditionals': 'Conditionals',
+    'passive_voice': 'Passive voice', 'reported_speech': 'Reported speech',
+    'gerunds_infinitives': 'Gerunds & infinitives',
+    'relative_clauses': 'Relative clauses', 'comparisons': 'Comparatives & superlatives',
+    'quantifiers': 'Quantifiers',
 }
 
 CONCEPT_TOPICS = {
@@ -52,6 +65,14 @@ CONCEPT_TOPICS = {
     'pronouns': 'pronouns',
     'word_form': 'word_form',
     'sentence_structure': 'sentence_structure',
+    'modals': 'modals',
+    'conditionals': 'conditionals',
+    'passive_voice': 'passive_voice',
+    'reported_speech': 'reported_speech',
+    'gerunds_infinitives': 'gerunds_infinitives',
+    'relative_clauses': 'relative_clauses',
+    'comparisons': 'comparisons',
+    'quantifiers': 'quantifiers',
 }
 
 
@@ -208,6 +229,13 @@ Arrange the language from clear single-clause easy items, through distracting
 medium structures, to multi-clause hard items. Do not copy personal names,
 places, employers, contact details, or distinctive facts from the source sentence;
 create analogous neutral examples instead.
+
+For general mode, cover at least six distinct grammar categories in a ten-item
+session. Test genuinely different rules rather than paraphrasing one sentence.
+Use advanced categories such as conditionals, passive voice, reported speech,
+relative clauses, modal verbs, gerunds/infinitives, comparisons, and quantifiers
+when appropriate for the requested difficulty. Difficulty must come from the
+grammar and sentence structure, not from adding a decorative introductory phrase.
 
 Each item must have:
 {"exercise_type":"multiple_choice|fill_blank","category":"allowed category code",
@@ -704,6 +732,89 @@ STRUCTURE_SEEDS = (
     ('before', 'Please verify every figure ___ you submit the document.'),
 )
 
+ADVANCED_GRAMMAR_SEEDS = {
+    'modals': (
+        ('must', ('must to', 'have', 'ought'), 'All visitors ___ wear an identification badge.', 'modal verb', '“Must” diễn tả quy định bắt buộc và đi với động từ nguyên mẫu.'),
+        ('might have', ('must', 'should be', 'can'), 'The parcel is late; it ___ been sent to the wrong address.', 'modal perfect', '“Might have + V3” diễn tả khả năng đã xảy ra trong quá khứ.'),
+        ('should have', ('should', 'had better', 'must be'), 'You ___ checked the figures before publishing the report.', 'modal perfect', '“Should have + V3” diễn tả việc đáng lẽ nên làm trong quá khứ.'),
+        ('cannot be', ('must be', 'should have', 'need to'), 'That explanation ___ correct because it contradicts the evidence.', 'modal deduction', '“Cannot be” diễn tả suy luận chắc chắn rằng điều gì đó không đúng.'),
+        ('need not', ('must not', 'cannot', 'would not'), 'You ___ print the form; a digital copy is acceptable.', 'modal verb', '“Need not” diễn tả việc không cần thiết phải làm.'),
+        ('would', ('will', 'shall', 'must'), 'When we lived nearby, we ___ walk to the library every evening.', 'modal verb', '“Would” có thể diễn tả thói quen lặp lại trong quá khứ.'),
+        ('could have', ('can', 'could', 'would have to'), 'With better planning, the team ___ avoided the delay.', 'modal perfect', '“Could have + V3” diễn tả một khả năng trong quá khứ đã không xảy ra.'),
+        ('must have', ('should', 'can have', 'would'), 'The lights are off; everyone ___ left the office already.', 'modal deduction', '“Must have + V3” diễn tả suy luận chắc chắn về quá khứ.'),
+    ),
+    'conditionals': (
+        ('will finish', ('finished', 'would finish', 'finish'), 'If the team receives the data today, it ___ the analysis tomorrow.', 'conditional', 'Điều kiện loại một dùng hiện tại đơn ở mệnh đề if và “will” ở mệnh đề chính.'),
+        ('would accept', ('will accept', 'accepted', 'accepts'), 'If the terms were clearer, more clients ___ the proposal.', 'conditional', 'Điều kiện loại hai dùng “would + V” cho tình huống giả định hiện tại.'),
+        ('would have arrived', ('will arrive', 'would arrive', 'had arrived'), 'If the train had left on time, we ___ before noon.', 'conditional', 'Điều kiện loại ba dùng “would have + V3” ở mệnh đề chính.'),
+        ('had known', ('knew', 'would know', 'have known'), 'Had I ___ about the change, I would have updated the schedule.', 'conditional inversion', 'Đảo ngữ điều kiện loại ba dùng “Had + chủ ngữ + V3”.'),
+        ('unless', ('if', 'because', 'although'), 'The application will be rejected ___ all required documents are included.', 'conjunction', '“Unless” mang nghĩa “nếu không”, phù hợp với điều kiện trong câu.'),
+        ('provided that', ('despite', 'whereas', 'as if'), 'You may work remotely ___ you remain available during office hours.', 'conditional linker', '“Provided that” đặt ra một điều kiện cần được đáp ứng.'),
+        ('were', ('was', 'had been', 'would be'), 'If I ___ responsible for the project, I would revise the timeline.', 'conditional', 'Trong câu điều kiện giả định, “were” có thể dùng với mọi chủ ngữ.'),
+        ('should', ('would', 'had', 'will'), '___ you need further assistance, contact the support team.', 'conditional inversion', 'Đảo ngữ điều kiện trang trọng có thể bắt đầu bằng “Should”.'),
+    ),
+    'passive_voice': (
+        ('is reviewed', ('reviews', 'is reviewing', 'has review'), 'Every application ___ by two independent assessors.', 'passive voice', 'Bị động hiện tại đơn dùng “is/are + V3”.'),
+        ('was postponed', ('postponed', 'was postponing', 'has postponed'), 'The conference ___ because of the severe weather.', 'passive voice', 'Bị động quá khứ đơn dùng “was/were + V3”.'),
+        ('has been approved', ('has approved', 'was approving', 'is approve'), 'The revised budget ___ by the board.', 'passive voice', 'Bị động hiện tại hoàn thành dùng “has/have been + V3”.'),
+        ('will be announced', ('will announce', 'is announced', 'will be announce'), 'The final results ___ next Monday.', 'passive voice', 'Bị động tương lai dùng “will be + V3”.'),
+        ('is being repaired', ('is repairing', 'has repaired', 'was repair'), 'The main elevator ___ at the moment.', 'passive voice', 'Bị động hiện tại tiếp diễn dùng “is/are being + V3”.'),
+        ('had been completed', ('had completed', 'was completed', 'has been completing'), 'The inspection ___ before the building reopened.', 'passive voice', 'Bị động quá khứ hoàn thành dùng “had been + V3”.'),
+        ('to be submitted', ('to submit', 'submitting', 'to be submit'), 'The documents are expected ___ by Friday.', 'passive infinitive', 'Sau “are expected”, dạng bị động là “to be + V3”.'),
+        ('being interrupted', ('interrupting', 'to interrupt', 'been interrupted'), 'The speaker dislikes ___ during a presentation.', 'passive gerund', 'Danh động từ bị động dùng “being + V3”.'),
+    ),
+    'reported_speech': (
+        ('was', ('is', 'has been', 'will be'), 'Lena said that the meeting ___ cancelled.', 'reported speech', 'Trong lời nói gián tiếp ở quá khứ, “is” thường lùi thành “was”.'),
+        ('had completed', ('completed', 'has completed', 'would complete'), 'He said that he ___ the task before lunch.', 'reported speech', 'Hành động xảy ra trước lời nói trong quá khứ dùng quá khứ hoàn thành.'),
+        ('would send', ('will send', 'sent', 'sends'), 'The manager promised that she ___ the details later.', 'reported speech', 'Trong lời nói gián tiếp, “will” thường lùi thành “would”.'),
+        ('whether', ('that', 'what', 'which'), 'They asked ___ the new policy applied to temporary staff.', 'reported question', 'Câu hỏi yes/no gián tiếp dùng “if” hoặc “whether”.'),
+        ('not to touch', ('to not touch', 'do not touch', 'not touching'), 'The technician warned us ___ the exposed wires.', 'reported command', 'Mệnh lệnh phủ định gián tiếp dùng “not to + V”.'),
+        ('where the archive was', ('where was the archive', 'where is the archive', 'the archive where was'), 'She asked me ___.', 'reported question', 'Câu hỏi gián tiếp dùng trật tự chủ ngữ trước động từ.'),
+        ('the following day', ('tomorrow', 'yesterday', 'that day before'), 'In reported speech, “tomorrow” often becomes ___.', 'reported time expression', '“Tomorrow” thường đổi thành “the following day” trong lời nói gián tiếp.'),
+        ('had to', ('must', 'will have to', 'has to'), 'He explained that he ___ leave early that afternoon.', 'reported speech', '“Must” chỉ nghĩa bắt buộc thường lùi thành “had to”.'),
+    ),
+    'gerunds_infinitives': (
+        ('reviewing', ('review', 'to reviewing', 'reviewed'), 'The editor suggested ___ the final section again.', 'verb form', 'Sau “suggest” dùng danh động từ V-ing.'),
+        ('to submit', ('submitting', 'submit', 'submitted'), 'The applicant agreed ___ an additional reference.', 'verb form', 'Sau “agree” dùng động từ nguyên mẫu có “to”.'),
+        ('taking', ('to take', 'take', 'taken'), 'Please avoid ___ personal calls during the meeting.', 'verb form', 'Sau “avoid” dùng danh động từ V-ing.'),
+        ('to inform', ('informing', 'inform', 'informed'), 'We regret ___ you that your request was unsuccessful.', 'verb form', '“Regret to inform” dùng khi thông báo một tin không mong muốn.'),
+        ('locking', ('to lock', 'lock', 'locked'), 'I remember ___ the door before I left.', 'verb form', '“Remember + V-ing” nói về ký ức của một hành động đã xảy ra.'),
+        ('to buy', ('buying', 'buy', 'bought'), 'Remember ___ enough paper on your way to the office.', 'verb form', '“Remember + to V” nói về việc cần làm.'),
+        ('working', ('to work', 'work', 'worked'), 'The new procedure means ___ longer hours this week.', 'verb form', '“Mean + V-ing” mang nghĩa kéo theo hoặc bao hàm điều gì.'),
+        ('to improve', ('improving', 'improve', 'improved'), 'The department aims ___ response times this year.', 'verb form', 'Sau “aim” dùng động từ nguyên mẫu có “to”.'),
+    ),
+    'relative_clauses': (
+        ('who', ('which', 'whose', 'whom'), 'The researcher ___ presented the findings works at the university.', 'relative pronoun', '“Who” thay cho người và làm chủ ngữ trong mệnh đề quan hệ.'),
+        ('whose', ('who', 'which', 'whom'), 'The candidate ___ application impressed the panel was shortlisted.', 'relative pronoun', '“Whose” diễn tả quan hệ sở hữu.'),
+        ('which', ('who', 'where', 'what'), 'The software, ___ was updated yesterday, now runs faster.', 'relative pronoun', '“Which” dùng cho vật trong mệnh đề quan hệ không xác định.'),
+        ('where', ('which', 'when', 'whose'), 'This is the laboratory ___ the samples are stored.', 'relative adverb', '“Where” thay cho cụm chỉ nơi chốn trong mệnh đề quan hệ.'),
+        ('to whom', ('to who', 'who to', 'whose'), 'The consultant ___ I spoke recommended a different approach.', 'object form of “who” after a preposition', 'Sau giới từ trong văn phong trang trọng dùng “whom”.'),
+        ('that', ('what', 'where', 'whose'), 'Everything ___ was discussed must remain confidential.', 'relative pronoun', 'Sau “everything”, có thể dùng “that” làm đại từ quan hệ.'),
+        ('when', ('where', 'which', 'who'), 'There are occasions ___ a written response is more appropriate.', 'relative adverb', '“When” dùng thay cho cụm chỉ thời gian.'),
+        ('most of whom', ('most of which', 'most who', 'whom most'), 'The course has twenty participants, ___ work full-time.', 'relative clause', 'Sau dấu phẩy có thể dùng “most of whom” để nói về người.'),
+    ),
+    'comparisons': (
+        ('more reliable than', ('most reliable than', 'reliabler than', 'as reliable than'), 'The revised method is ___ the original one.', 'comparison', 'Tính từ dài dùng cấu trúc “more + adjective + than”.'),
+        ('the most efficient', ('more efficient', 'the efficientest', 'most efficiently'), 'This is ___ solution we have tested so far.', 'superlative', 'So sánh nhất với tính từ dài dùng “the most + adjective”.'),
+        ('as accurate as', ('more accurate as', 'so accurate than', 'as accurately than'), 'The preliminary estimate was ___ the final calculation.', 'comparison', 'So sánh bằng dùng “as + adjective + as”.'),
+        ('the fewer', ('fewer', 'the fewest', 'less'), 'The more carefully you plan, ___ mistakes you make.', 'parallel comparison', 'Cấu trúc song hành dùng “the more…, the fewer…”.'),
+        ('far more complex', ('very complex than', 'far most complex', 'much complex'), 'The legal issue is ___ than we initially expected.', 'comparison', '“Far” có thể nhấn mạnh dạng so sánh hơn “more complex”.'),
+        ('less expensive than', ('least expensive than', 'less expensively as', 'not expensive than'), 'The digital subscription is ___ the printed edition.', 'comparison', 'So sánh kém dùng “less + adjective + than”.'),
+        ('better and better', ('more and better', 'best and best', 'better than better'), 'The team’s performance is getting ___.', 'progressive comparison', 'Sự thay đổi tăng dần có thể dùng “comparative and comparative”.'),
+        ('no sooner', ('not sooner', 'no soon', 'hardly sooner'), '___ had the meeting begun than the fire alarm sounded.', 'inverted comparison', 'Cấu trúc “No sooner… than…” yêu cầu đảo ngữ.'),
+    ),
+    'quantifiers': (
+        ('few', ('little', 'much', 'every'), 'Very ___ applicants had the required experience.', 'quantifier', '“Few” dùng với danh từ đếm được số nhiều.'),
+        ('little', ('few', 'many', 'several'), 'There is very ___ evidence to support that conclusion.', 'quantifier', '“Little” dùng với danh từ không đếm được.'),
+        ('a number of', ('the number of', 'an amount of', 'much'), '___ employees have requested flexible hours.', 'quantifier', '“A number of” đi với danh từ đếm được số nhiều và động từ số nhiều.'),
+        ('the number of', ('a number of', 'many of', 'several'), '___ complaints has fallen this month.', 'quantifier', '“The number of” là cụm chủ ngữ số ít.'),
+        ('neither', ('both', 'all', 'every'), '___ of the two proposals meets all the requirements.', 'quantifier', '“Neither of” mang nghĩa không phương án nào trong hai phương án.'),
+        ('each', ('many', 'few', 'much'), 'The reviewer examined ___ of the documents separately.', 'quantifier', '“Each of” nhấn mạnh từng thành viên riêng lẻ trong một nhóm.'),
+        ('a great deal of', ('many', 'a few', 'several'), 'The investigation required ___ patience.', 'quantifier', '“A great deal of” dùng với danh từ không đếm được.'),
+        ('fewer', ('less', 'little', 'much'), 'The updated form contains ___ questions than the old one.', 'quantifier', '“Fewer” dùng với danh từ đếm được số nhiều.'),
+    ),
+}
+
 OTHER_SEEDS = (
     ('review', ('reviews', 'reviewed', 'to review'), 'You should ___ the instructions before starting.'),
     ('working', ('work', 'to work', 'worked'), 'The team enjoys ___ on practical problems.'),
@@ -743,7 +854,7 @@ def _wrap_personalized_prompt(prompt, difficulty, index):
     return wrapper.format(lowered)
 
 
-def _personalized_seed_item(concept, exercise_type, difficulty, index):
+def _personalized_seed_item(concept, exercise_type, difficulty, index, decorate=True):
     topic = CONCEPT_TOPICS.get(concept, concept if concept in TOPICS else 'other_grammar')
     if topic == 'verb_tense':
         subject, base, past, participle, third, gerund, complement = VERB_SEEDS[index % len(VERB_SEEDS)]
@@ -784,7 +895,11 @@ def _personalized_seed_item(concept, exercise_type, difficulty, index):
         seed_id = f'prep-{index % len(PREPOSITION_SEEDS)}'
     elif topic == 'pronouns':
         answer, prompt = PRONOUN_SEEDS[index % len(PRONOUN_SEEDS)]
-        hint, distractors = 'pronoun', ('I', 'me', 'my', 'mine', 'they', 'them', 'their', 'themselves')
+        hint = (
+            'object form of “who” after a preposition'
+            if prompt.startswith('The researcher to ___') else 'pronoun role'
+        )
+        distractors = ('I', 'me', 'my', 'mine', 'they', 'them', 'their', 'themselves')
         explanation = f'Vị trí và vai trò trong câu yêu cầu đại từ “{answer}”.'
         seed_id = f'pronoun-{index % len(PRONOUN_SEEDS)}'
     elif topic == 'word_form':
@@ -797,13 +912,18 @@ def _personalized_seed_item(concept, exercise_type, difficulty, index):
         hint, distractors = 'conjunction', ('and', 'but', 'because', 'although', 'therefore', 'unless')
         explanation = f'Quan hệ giữa các mệnh đề yêu cầu từ nối “{answer}”.'
         seed_id = f'structure-{index % len(STRUCTURE_SEEDS)}'
+    elif topic in ADVANCED_GRAMMAR_SEEDS:
+        seeds = ADVANCED_GRAMMAR_SEEDS[topic]
+        answer, distractors, prompt, hint, explanation = seeds[index % len(seeds)]
+        seed_id = f'{topic}-{index % len(seeds)}'
     else:
         answer, distractors, prompt = OTHER_SEEDS[index % len(OTHER_SEEDS)]
         hint = answer.split()[-1] if len(answer.split()) == 1 else answer
         explanation = f'Cấu trúc ngữ pháp trong câu yêu cầu “{answer}”.'
         seed_id = f'other-{index % len(OTHER_SEEDS)}'
 
-    prompt = _wrap_personalized_prompt(prompt, difficulty, index // 2)
+    if decorate:
+        prompt = _wrap_personalized_prompt(prompt, difficulty, index // 2)
     options = [] if exercise_type == 'fill_blank' else _four_options(answer, distractors)
     return {
         'exercise_type': exercise_type,
@@ -845,31 +965,90 @@ def personalized_fallback_exercises(mistake, slots, recent_prompts=None, recent_
     return result
 
 
+GENERAL_GRAMMAR_CURRICULUM = {
+    'easy': (
+        'present_simple', 'articles', 'prepositions', 'subject_verb_agreement',
+        'pronouns', 'comparisons', 'quantifiers', 'modals', 'past_simple',
+        'gerunds_infinitives', 'word_form', 'sentence_structure',
+    ),
+    'medium': (
+        'present_perfect', 'passive_voice', 'articles', 'conditionals',
+        'prepositions', 'reported_speech', 'subject_verb_agreement', 'relative_clauses',
+        'past_continuous', 'gerunds_infinitives', 'future_forms', 'modals',
+        'word_form', 'comparisons', 'sentence_structure', 'quantifiers',
+    ),
+    'hard': (
+        'conditionals', 'reported_speech', 'passive_voice', 'relative_clauses',
+        'modals', 'gerunds_infinitives', 'sentence_structure', 'word_form',
+        'present_perfect', 'past_continuous', 'comparisons', 'quantifiers',
+        'subject_verb_agreement', 'articles', 'prepositions', 'pronouns',
+    ),
+}
+
+
 def general_fallback_exercises(difficulty, count, required_types, recent_prompts=None):
-    pools = {
-        'easy': ['articles', 'prepositions', 'pronouns', 'subject_verb_agreement'],
-        'medium': ['verb_tense', 'word_form', 'sentence_structure', 'other_grammar'],
-        'hard': ['sentence_structure', 'word_form', 'verb_tense', 'other_grammar'],
-    }
-    topics = list(pools.get(difficulty, pools['easy']))
-    random.shuffle(topics)
+    difficulty = difficulty if difficulty in GENERAL_GRAMMAR_CURRICULUM else 'easy'
+    curriculum = list(GENERAL_GRAMMAR_CURRICULUM[difficulty])
     targets = dict(required_types)
     result = []
-    for topic in topics * 3:
-        needed = sum(targets.values())
-        if not needed:
+    requested_types = [
+        exercise_type
+        for exercise_type, amount in targets.items()
+        for _ in range(amount)
+    ][:count]
+    random.shuffle(requested_types)
+    curriculum_offset = random.randrange(len(curriculum))
+    seed_offset = random.randrange(96)
+    used_keys = set()
+
+    # Prefer a different grammar concept for every slot. Only move to another
+    # concept when all of its unused sentence frames conflict with recent work.
+    for slot_index, exercise_type in enumerate(requested_types):
+        found = None
+        for concept_shift in range(len(curriculum)):
+            concept = curriculum[(curriculum_offset + slot_index + concept_shift) % len(curriculum)]
+            for seed_attempt in range(24):
+                candidate = _personalized_seed_item(
+                    concept,
+                    exercise_type,
+                    difficulty,
+                    seed_offset + slot_index + seed_attempt,
+                    decorate=False,
+                )
+                if candidate['generation_key'] in used_keys:
+                    continue
+                compared_prompts = [*(recent_prompts or []), *[item['prompt'] for item in result]]
+                if is_recent_prompt(candidate['prompt'], compared_prompts, compare_templates=True):
+                    continue
+                found = candidate
+                break
+            if found:
+                break
+        if found:
+            result.append(found)
+            used_keys.add(found['generation_key'])
+            targets[exercise_type] -= 1
+
+    # Defensive compatibility fallback for an exceptionally saturated history.
+    for topic in list(FALLBACK_BANK):
+        if len(result) >= count:
             break
         candidates = dynamic_fallback_exercises(
             topic,
-            needed,
+            count - len(result),
             targets,
-            [*(recent_prompts or []), *[x['prompt'] for x in result]],
+            [*(recent_prompts or []), *[item['prompt'] for item in result]],
             compare_templates=True,
         )
         for item in candidates:
             if targets.get(item['exercise_type'], 0) <= 0:
                 continue
             item['difficulty'] = difficulty
+            item['generation_key'] = fingerprint(
+                topic, difficulty, item['exercise_type'], prompt_template_signature(item['prompt'])
+            )
             result.append(item)
             targets[item['exercise_type']] -= 1
+            if len(result) >= count:
+                break
     return result[:count]

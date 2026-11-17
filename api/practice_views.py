@@ -165,6 +165,36 @@ def _public_item(item):
     if exercise.category == 'subject_verb_agreement' and exercise.accepted_answers:
         # Repair older rows where stripping the final "s" changed "has" into "ha".
         hint = infinitive_hint(exercise.accepted_answers[0])
+    hint_guidance = {
+        'verb_tense': 'Identify the time marker and choose the tense it requires.',
+        'subject_verb_agreement': 'Find the true subject, then decide whether it is singular or plural.',
+        'articles': 'Check whether the noun is specific and whether its opening sound is a vowel sound.',
+        'prepositions': 'Look at the fixed expression and the time, place, or relationship being described.',
+        'pronouns': 'Identify the pronoun’s role: subject, object, possession, or reflexive.',
+        'word_form': 'Use the words around the blank to determine the required part of speech.',
+        'sentence_structure': 'Work out the logical relationship between the two clauses.',
+        'modals': 'Decide whether the sentence expresses obligation, possibility, advice, or deduction.',
+        'conditionals': 'Identify the conditional type from the verb forms and whether the situation is real or hypothetical.',
+        'passive_voice': 'Choose the correct form of “be” and the past participle for the required tense.',
+        'reported_speech': 'Check whether tense, word order, pronouns, or time expressions must shift.',
+        'gerunds_infinitives': 'Check which verb pattern is required after the word before the blank.',
+        'relative_clauses': 'Determine what the missing relative word refers to and its role in the clause.',
+        'comparisons': 'Identify whether the sentence needs equality, a comparative, or a superlative.',
+        'quantifiers': 'Decide whether the noun is countable and whether the meaning is singular or plural.',
+        'other_grammar': 'Use the grammatical pattern immediately before and after the blank.',
+    }
+    hint_levels = []
+    if hint:
+        label = TOPICS.get(exercise.category, TOPICS['other_grammar'])
+        hint_levels.append(f'This question focuses on {label.lower()}.')
+        guidance = hint_guidance.get(exercise.category, hint_guidance['other_grammar'])
+        if normalize_answer(guidance) not in {normalize_answer(value) for value in hint_levels}:
+            hint_levels.append(guidance)
+        correct_answer = exercise.accepted_answers[0] if exercise.accepted_answers else ''
+        if normalize_answer(hint) != normalize_answer(correct_answer):
+            specific = f'More specific clue: {hint}.'
+            if normalize_answer(specific) not in {normalize_answer(value) for value in hint_levels}:
+                hint_levels.append(specific)
     result = {
         'item_id': str(item.id),
         'exercise_id': str(exercise.id),
@@ -175,6 +205,7 @@ def _public_item(item):
         'difficulty': exercise.difficulty,
         'prompt': exercise.prompt,
         'hint': hint,
+        'hint_levels': hint_levels,
         'options': exercise.options if exercise.exercise_type == PracticeExercise.TYPE_MULTIPLE_CHOICE else [],
         'answered': item.is_correct is not None,
         'user_answer': item.user_answer if item.is_correct is not None else '',

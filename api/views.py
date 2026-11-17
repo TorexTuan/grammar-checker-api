@@ -2,7 +2,7 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes, throttle_classes
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.throttling import UserRateThrottle
 
@@ -45,11 +45,11 @@ MIN_ASSESSMENT_WORDS = 20
 MAX_ASSESSMENT_CHARACTERS = 10000
 MAX_AUTOCOMPLETE_SESSION_LENGTH = 128
 MAX_AUTOCOMPLETE_OUTPUT_LENGTH = 1000
-MIN_AI_DETECT_CHARACTERS = 300
+MIN_AI_DETECT_CHARACTERS = 100
 MAX_AI_DETECT_CHARACTERS = 10000
 
 
-class AiDetectorUserThrottle(UserRateThrottle):
+class AiDetectorRateThrottle(UserRateThrottle):
     rate = '10/hour'
 
 
@@ -62,8 +62,8 @@ def health_check(request):
 
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
-@throttle_classes([AiDetectorUserThrottle])
+@permission_classes([AllowAny])
+@throttle_classes([AiDetectorRateThrottle])
 def ai_detect(request):
     text = request.data.get('text')
     if not isinstance(text, str):
