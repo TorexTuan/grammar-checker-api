@@ -941,18 +941,137 @@ def _personalized_seed_item(concept, exercise_type, difficulty, index, decorate=
     }
 
 
+MISTAKE_VERB_DISTRACTORS = {
+    'brought': ('bring', 'brings', 'bringing'),
+    'had': ('have', 'has', 'having'),
+    'forgotten': ('forget', 'forgot', 'forgetting'),
+    'begun': ('begin', 'began', 'beginning'),
+    'seen': ('see', 'saw', 'seeing'),
+    'left': ('leave', 'leaves', 'leaving'),
+    'finished': ('finish', 'finishes', 'finishing'),
+    'gone': ('go', 'went', 'going'),
+    'spent': ('spend', 'spends', 'spending'),
+    'travel': ('travels', 'traveled', 'traveling'),
+}
+
+
+def _mistake_distractors(mistake, original, correction):
+    concept = str(getattr(mistake, 'concept_code', '') or '')
+    category = str(getattr(mistake, 'category', '') or '')
+    pools = {
+        'subject_verb_agreement': ('has', 'have', 'is', 'are', 'does', 'do', "hasn't", "haven't"),
+        'prepositions': ('for', 'since', 'at', 'on', 'in', 'by', 'during'),
+        'articles': ('a', 'an', 'the', 'no article'),
+        'pronouns': ('I', 'me', 'my', 'mine', 'who', 'whom', 'whose'),
+        'word_form': ('travel', 'travels', 'traveled', 'traveling'),
+    }
+    candidates = [original]
+    candidates.extend(MISTAKE_VERB_DISTRACTORS.get(normalize_answer(correction), ()))
+    candidates.extend(pools.get(concept, pools.get(category, ())))
+    candidates.extend(('does', 'did', 'being', 'to do'))
+    return tuple(
+        value for value in candidates
+        if normalize_answer(value) != normalize_answer(correction)
+    )
+
+
+def _mistake_specific_hint(mistake, blanked_context):
+    concept = str(getattr(mistake, 'concept_code', '') or '')
+    before_blank = blanked_context.split('___', 1)[0].casefold().rstrip()
+    if re.search(r"\b(has|have|had|hasn't|haven't|hadn't)$", before_blank):
+        return 'past participle after have, has, or had'
+    if re.search(r"\b(did|didn't)$", before_blank):
+        return 'base verb after did or did not'
+    return {
+        'subject_verb_agreement': 'match the auxiliary or verb with the true subject',
+        'prepositions': 'distinguish a duration from a starting point or fixed time expression',
+        'articles': 'check specificity and the opening sound of the following noun',
+        'pronouns': 'identify whether the blank is a subject, object, possessive, or reflexive pronoun',
+        'word_form': 'identify the part of speech required by the surrounding words',
+        'sentence_structure': 'check how the two clauses are logically connected',
+        'present_perfect': 'use have or has plus the past participle',
+        'past_simple': 'check whether the surrounding auxiliary requires a base form or past participle',
+        'verb_tense': 'use the time relationship between the clauses to choose the verb form',
+        'other_grammar': 'use the grammar pattern immediately around the blank',
+    }.get(concept, 'use the correction pattern from your Editor mistake')
+
+
+def mistake_anchored_exercise(mistake, exercise_type, difficulty):
+    context = str(getattr(mistake, 'sentence_context', '') or '').strip()
+    original = str(getattr(mistake, 'original', '') or '').strip()
+    correction = str(getattr(mistake, 'correction', '') or '').strip()
+    if not context or not original or not correction:
+        return None
+    match = re.search(re.escape(original), context, flags=re.IGNORECASE)
+    if not match:
+        return None
+    blanked = f'{context[:match.start()]}___{context[match.end():]}'
+    if exercise_type == 'multiple_choice':
+        prompt = f'Which form correctly replaces “{original}” in this sentence? {context}'
+        options = _four_options(correction, _mistake_distractors(mistake, original, correction))
+        hint = ''
+    else:
+        prompt = f'Correct the sentence from your Editor: {blanked}'
+        options = []
+        hint = _mistake_specific_hint(mistake, blanked)
+    explanation = str(getattr(mistake, 'explanation', '') or '').strip()
+    if not explanation:
+        explanation = f'Trong câu này cần dùng “{correction}” thay cho “{original}”.'
+    mistake_key = str(getattr(mistake, 'fingerprint', '') or fingerprint(
+        getattr(mistake, 'concept_code', ''), context, original, correction,
+    ))
+    return {
+        'exercise_type': exercise_type,
+        'category': CONCEPT_TOPICS.get(
+            getattr(mistake, 'concept_code', ''),
+            normalize_topic(getattr(mistake, 'category', '')),
+        ),
+        'concept_code': getattr(mistake, 'concept_code', ''),
+        'difficulty': difficulty,
+        'prompt': prompt,
+        'hint': hint,
+        'options': options,
+        'accepted_answers': [correction],
+        'explanation': explanation,
+        'generation_key': fingerprint('editor-mistake', mistake_key, difficulty, exercise_type),
+        '_mistake': mistake,
+        '_anchored': True,
+    }
+
+
 def personalized_fallback_exercises(mistake, slots, recent_prompts=None, recent_generation_keys=None):
+    mistakes = list(mistake) if isinstance(mistake, (list, tuple)) else [mistake]
+    mistakes = [item for item in mistakes if item is not None]
+    if not mistakes:
+        return []
     recent_generation_keys = set(recent_generation_keys or [])
     result = []
     for slot_index, slot in enumerate(slots):
         found = None
+        for mistake_shift in range(len(mistakes)):
+            source_mistake = mistakes[(slot_index + mistake_shift) % len(mistakes)]
+            candidate = mistake_anchored_exercise(
+                source_mistake,
+                slot['exercise_type'],
+                slot['difficulty'],
+            )
+            if not candidate or candidate['generation_key'] in recent_generation_keys:
+                continue
+            if is_recent_prompt(candidate['prompt'], [*(recent_prompts or []), *[item['prompt'] for item in result]]):
+                continue
+            found = candidate
+            break
         for attempt in range(160):
+            if found:
+                break
+            source_mistake = mistakes[(slot_index + attempt) % len(mistakes)]
             candidate = _personalized_seed_item(
-                mistake.concept_code,
+                source_mistake.concept_code,
                 slot['exercise_type'],
                 slot['difficulty'],
                 slot_index + attempt,
             )
+            candidate['_mistake'] = source_mistake
             if candidate['generation_key'] in recent_generation_keys:
                 continue
             if is_recent_prompt(candidate['prompt'], [*(recent_prompts or []), *[item['prompt'] for item in result]]):

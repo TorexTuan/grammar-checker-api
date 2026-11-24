@@ -412,6 +412,7 @@ def create_practice_session(request):
                 mode='personalized',
                 used_count=0,
                 mistake__concept_code=concept_code,
+                source__in=('gemini_primary', 'gemini_secondary', 'editor_mistake'),
             ).exclude(generation_key='').order_by('created_at'))
             for slot in list(pending_slots):
                 exercise = next((item for item in cached if (
@@ -422,6 +423,25 @@ def create_practice_session(request):
                 if exercise:
                     select_personalized(exercise)
                     cached.remove(exercise)
+                    pending_slots.remove(slot)
+
+            if pending_slots:
+                fallback_items = personalized_fallback_exercises(
+                    group['mistakes'],
+                    pending_slots,
+                    [*recent_prompts, *[chosen.prompt for chosen in selected]],
+                    selected_keys,
+                )
+                for slot, data in zip(list(pending_slots), fallback_items):
+                    exercise = _save_exercise(
+                        request.user,
+                        data,
+                        'editor_mistake' if data.get('_anchored') else 'template',
+                        data.get('_mistake', representative),
+                        mode,
+                        data['difficulty'],
+                    )
+                    select_personalized(exercise)
                     pending_slots.remove(slot)
 
             if pending_slots:
@@ -476,7 +496,7 @@ def create_practice_session(request):
 
             if pending_slots:
                 fallback_items = personalized_fallback_exercises(
-                    representative,
+                    group['mistakes'],
                     pending_slots,
                     [*recent_prompts, *[chosen.prompt for chosen in selected]],
                     selected_keys,
@@ -485,8 +505,8 @@ def create_practice_session(request):
                     exercise = _save_exercise(
                         request.user,
                         data,
-                        'template',
-                        representative,
+                        'editor_mistake' if data.get('_anchored') else 'template',
+                        data.get('_mistake', representative),
                         mode,
                         data['difficulty'],
                     )

@@ -21,6 +21,7 @@ IRREGULAR_VERB_FORMS = {
     'eaten': ('eat', 'quá khứ phân từ (V3)'),
     'forgot': ('forget', 'quá khứ đơn (V2)'),
     'forgotten': ('forget', 'quá khứ phân từ (V3)'),
+    'gave': ('give', 'quá khứ đơn (V2)'),
     'gone': ('go', 'quá khứ phân từ (V3)'),
     'had': ('have', 'quá khứ đơn (V2) hoặc quá khứ phân từ (V3)'),
     'known': ('know', 'quá khứ phân từ (V3)'),
@@ -28,6 +29,7 @@ IRREGULAR_VERB_FORMS = {
     'made': ('make', 'quá khứ đơn (V2) hoặc quá khứ phân từ (V3)'),
     'seen': ('see', 'quá khứ phân từ (V3)'),
     'spoken': ('speak', 'quá khứ phân từ (V3)'),
+    'spent': ('spend', 'quá khứ đơn (V2) hoặc quá khứ phân từ (V3)'),
     'taken': ('take', 'quá khứ phân từ (V3)'),
     'written': ('write', 'quá khứ phân từ (V3)'),
 }
@@ -99,8 +101,79 @@ def _normalized_word(value):
 
 
 def _preceding_perfect_auxiliary(prefix):
-    match = re.search(r"\b(has|have|had)(?:\s+not|\s+n['’]t)?\s*$", prefix, flags=re.IGNORECASE)
-    return match.group(1) if match else None
+    match = re.search(
+        r"\b((?:(?:would|could|should|might|may|must)\s+)?(?:has|have|had))"
+        r"(?:\s+not|\s+n['’]t)?\s*$",
+        prefix,
+        flags=re.IGNORECASE,
+    )
+    return re.sub(r'\s+', ' ', match.group(1)) if match else None
+
+
+def _existential_be_subject(issue, text):
+    """Return the noun that controls agreement in a nearby there + be clause."""
+    original = str(issue.get('original') or '')
+    offset = issue.get('offset', 0)
+    if not isinstance(offset, int) or original.casefold() not in {'is', 'are', 'was', 'were'}:
+        return '', ''
+    prefix = text[max(0, offset - 40):offset]
+    if not re.search(r'\bthere\s*$', prefix, flags=re.IGNORECASE):
+        return '', ''
+    suffix = re.split(r'[.!?\n]', text[offset + len(original):], maxsplit=1)[0]
+    match = re.match(
+        r"\s*(?:(?:no|some|many|several|few|a|an|one|two|three|four|five)\s+)?"
+        r"([A-Za-z][\w'’-]*)",
+        suffix,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return '', ''
+    noun = match.group(1)
+    number = 'số nhiều' if noun.casefold().endswith('s') and not noun.casefold().endswith('ss') else 'số ít'
+    return noun, number
+
+
+def _relative_pronoun_antecedent(prefix):
+    """Find a simple noun phrase immediately before who/which/that."""
+    value = re.sub(r'\s+', ' ', prefix).strip()
+    relative_match = re.search(r'\b(who|which|that)\s*$', value, flags=re.IGNORECASE)
+    if not relative_match:
+        return '', '', ''
+    before_relative = value[:relative_match.start()].rstrip()
+    phrase_match = re.search(
+        r"\b((?:a|an|the|another|this|that|each|every|one)\s+"
+        r"(?:[A-Za-z][\w'’-]*\s+){0,3}[A-Za-z][\w'’-]*)$",
+        before_relative,
+        flags=re.IGNORECASE,
+    )
+    if phrase_match:
+        phrase = phrase_match.group(1)
+    else:
+        noun_match = re.search(r"([A-Za-z][\w'’-]*)$", before_relative)
+        if not noun_match:
+            return '', '', ''
+        phrase = noun_match.group(1)
+    relative = relative_match.group(1)
+    words = re.findall(r"[A-Za-z][\w'’-]*", phrase)
+    head = words[-1] if words else ''
+    singular_determiners = ('a ', 'an ', 'another ', 'this ', 'that ', 'each ', 'every ', 'one ')
+    number = 'số ít' if phrase.casefold().startswith(singular_determiners) else (
+        'số nhiều' if head.casefold().endswith('s') and not head.casefold().endswith('ss') else 'số ít'
+    )
+    return phrase, relative, number
+
+
+def _gerund_subject_before(prefix):
+    """Return a gerund phrase used as the subject immediately before a verb."""
+    value = re.sub(r'\s+', ' ', prefix).strip()
+    match = re.search(
+        r"\b([A-Za-z][\w'’-]*ing(?:\s+"
+        r"(?:with|without|for|to|in|on|at|around|about|of)\s+"
+        r"[A-Za-z][\w'’-]*(?:\s+[A-Za-z][\w'’-]*){0,2})?)\s*$",
+        value,
+        flags=re.IGNORECASE,
+    )
+    return match.group(1) if match else ''
 
 
 def _subject_before(prefix):
@@ -360,6 +433,46 @@ def _contextual_fallback_explanation(issue, text=''):
     original_form = _verb_form(original)
     compound_subject_change = _compound_subject_pronoun_change(original, replacement)
 
+    existential_noun, existential_number = _existential_be_subject(issue, text)
+    if existential_noun:
+        return (
+            change + 'Trong cấu trúc “there + be”, động từ “be” hòa hợp với danh từ đứng sau. '
+            f'“{existential_noun}” là danh từ {existential_number}, nên ở quá khứ dùng '
+            f'“{replacement}”, không dùng “{original}”.'
+        )
+
+    if {original_word, replacement_word} <= {'is', 'are', 'was', 'were'}:
+        antecedent, relative_pronoun, antecedent_number = _relative_pronoun_antecedent(prefix)
+        if antecedent:
+            return (
+                change + f'Đại từ quan hệ “{relative_pronoun}” thay cho “{antecedent}”, '
+                f'là danh từ {antecedent_number}. Vì vậy động từ “be” phải dùng “{replacement}”, '
+                f'không dùng “{original}”.'
+            )
+
+        gerund_subject = _gerund_subject_before(prefix)
+        if gerund_subject:
+            return (
+                change + f'“{gerund_subject}” là một cụm danh động từ (V-ing) giữ vai trò chủ ngữ. '
+                'Một hoạt động được diễn đạt bằng cụm danh động từ này được xem là chủ ngữ số ít, '
+                f'nên dùng “{replacement}”, không dùng “{original}”.'
+            )
+
+        subject, subject_number = _subject_before(prefix)
+        if subject:
+            tense = 'hiện tại' if replacement_word in {'is', 'are'} else 'quá khứ'
+            return (
+                change + f'Chủ ngữ “{subject}” là {subject_number}. '
+                f'Ở thì {tense}, động từ “be” đi với chủ ngữ này là “{replacement}”, '
+                f'không dùng “{original}”.'
+            )
+
+    if original_word == 'advices' and replacement_word == 'advice':
+        return (
+            change + '“Advice” là danh từ không đếm được nên không có dạng số nhiều “advices”. '
+            'Khi cần đếm, dùng cấu trúc như “a piece of advice” hoặc “two pieces of advice”.'
+        )
+
     if compound_subject_change:
         incorrect_subject = compound_subject_change['incorrect_subject']
         correct_subject = compound_subject_change['correct_subject']
@@ -404,8 +517,12 @@ def _contextual_fallback_explanation(issue, text=''):
             f', còn “{original}” là dạng {original_form["label"]}'
             if original_form else ''
         )
+        auxiliary_rule = (
+            'Cấu trúc modal perfect dùng “động từ khuyết thiếu + have + V3”. '
+            if ' ' in auxiliary else ''
+        )
         return (
-            change + f'Sau “{auxiliary}”, động từ chính phải ở dạng quá khứ phân từ (V3). '
+            change + auxiliary_rule + f'Sau “{auxiliary}”, động từ chính phải ở dạng quá khứ phân từ (V3). '
             f'“{replacement}” là V3 của “{base}”{contrast}.'
         )
 

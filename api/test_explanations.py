@@ -162,6 +162,66 @@ class ContextualExplanationTests(SimpleTestCase):
         self.assertNotIn('yesterday', explanation)
         self.assertIn('“left” là dạng quá khứ đơn (V2)', explanation)
 
+    def test_existential_there_names_the_plural_noun(self):
+        text = 'She told us that there was no rooms available.'
+        explanation = _contextual_fallback_explanation(
+            self.issue(text, 'was', 'were', 'GRAMMAR • R:VERB:SVA'), text,
+        )
+        self.assertIn('cấu trúc “there + be”', explanation)
+        self.assertIn('“rooms” là danh từ số nhiều', explanation)
+        self.assertIn('dùng “were”, không dùng “was”', explanation)
+
+    def test_relative_pronoun_agrees_with_singular_antecedent(self):
+        text = 'We found another hotel which were cheaper.'
+        explanation = _contextual_fallback_explanation(
+            self.issue(text, 'were', 'was', 'GRAMMAR • R:VERB:SVA'), text,
+        )
+        self.assertIn('“which” thay cho “another hotel”', explanation)
+        self.assertIn('danh từ số ít', explanation)
+        self.assertIn('dùng “was”, không dùng “were”', explanation)
+
+    def test_gave_is_identified_as_past_simple(self):
+        text = 'An old man who give us some useful information.'
+        explanation = _contextual_fallback_explanation(
+            self.issue(text, 'give', 'gave', 'GRAMMAR • R:VERB:TENSE'), text,
+        )
+        self.assertIn('“gave” là dạng quá khứ đơn (V2) của “give”', explanation)
+
+    def test_advice_is_explained_as_uncountable(self):
+        text = 'Please give us some useful advices about local attractions.'
+        explanation = _contextual_fallback_explanation(
+            self.issue(text, 'advices', 'advice', 'GRAMMAR • R:NOUN:NUM'), text,
+        )
+        self.assertIn('danh từ không đếm được', explanation)
+        self.assertIn('“a piece of advice”', explanation)
+
+    def test_modal_perfect_requires_past_participle(self):
+        text = 'If we had arrived earlier, we would have spend more time there.'
+        explanation = _contextual_fallback_explanation(
+            self.issue(text, 'spend', 'spent', 'GRAMMAR • R:VERB:FORM'), text,
+        )
+        self.assertIn('động từ khuyết thiếu + have + V3', explanation)
+        self.assertIn('Sau “would have”', explanation)
+        self.assertIn('“spent” là V3 của “spend”', explanation)
+
+    def test_gerund_phrase_subject_is_singular(self):
+        text = 'I believe that traveling with friends are one of the best experiences.'
+        explanation = _contextual_fallback_explanation(
+            self.issue(text, 'are', 'is', 'GRAMMAR • R:VERB:SVA'), text,
+        )
+        self.assertIn('“traveling with friends” là một cụm danh động từ', explanation)
+        self.assertIn('được xem là chủ ngữ số ít', explanation)
+        self.assertIn('dùng “is”, không dùng “are”', explanation)
+
+    def test_past_be_agrees_with_we(self):
+        text = 'While we was walking around the city, we found a cafe.'
+        explanation = _contextual_fallback_explanation(
+            self.issue(text, 'was', 'were', 'GRAMMAR • R:VERB:SVA'), text,
+        )
+        self.assertIn('Chủ ngữ “we” là số nhiều', explanation)
+        self.assertIn('Ở thì quá khứ', explanation)
+        self.assertIn('là “were”, không dùng “was”', explanation)
+
     @patch('api.services.gemini.get_gemini_client')
     def test_generic_gemini_explanation_does_not_replace_specific_fallback(self, client_factory):
         text = "My brother haven't finished the report."

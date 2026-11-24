@@ -16,6 +16,7 @@ from .services.practice import (
     general_fallback_exercises,
     generate_with_gemini,
     infinitive_hint,
+    mistake_anchored_exercise,
     prompt_template_signature,
 )
 
@@ -60,6 +61,30 @@ class PracticeApiTests(APITestCase):
         self.assertGreaterEqual(len(categories & advanced), 4)
         self.assertEqual(sum(item['exercise_type'] == 'multiple_choice' for item in exercises), 6)
         self.assertEqual(sum(item['exercise_type'] == 'fill_blank' for item in exercises), 4)
+
+    def test_personalized_fallback_anchors_to_the_editor_correction(self):
+        mistake = PracticeMistake.objects.create(
+            owner=self.user,
+            category='verb_tense',
+            concept_code='past_simple',
+            concept_label='Past simple',
+            source='editor_live',
+            sentence_context="I couldn't open the door because I hadn't bring my spare key.",
+            original='bring',
+            correction='brought',
+            explanation='After “had not”, use the past participle.',
+            fingerprint='bring-to-brought',
+        )
+        fill_blank = mistake_anchored_exercise(mistake, 'fill_blank', 'medium')
+        multiple_choice = mistake_anchored_exercise(mistake, 'multiple_choice', 'medium')
+
+        self.assertIn("I hadn't ___ my spare key", fill_blank['prompt'])
+        self.assertEqual(fill_blank['accepted_answers'], ['brought'])
+        self.assertIn('past participle', fill_blank['hint'])
+        self.assertIn('bring', multiple_choice['prompt'])
+        self.assertIn('brought', multiple_choice['options'])
+        self.assertIn('bring', multiple_choice['options'])
+        self.assertIs(fill_blank['_mistake'], mistake)
 
     def test_records_and_deduplicates_private_mistakes(self):
         first = self.client.post('/api/practice/mistakes/', self.mistake_payload(), format='json')
@@ -129,6 +154,8 @@ class PracticeApiTests(APITestCase):
         self.assertEqual(exercise_types.count('multiple_choice'), 6)
         self.assertEqual(exercise_types.count('fill_blank'), 4)
         self.assertEqual(difficulties, sorted(difficulties, key=('easy', 'medium', 'hard').index))
+        self.assertTrue(any('Editor' in item['prompt'] for item in response.data['items']))
+        self.assertGreaterEqual(response.data['source_summary'].get('editor_mistake', 0), 1)
         self.assertTrue(all(exercise.mistake_id == mistake.id for exercise in PracticeExercise.objects.filter(session_items__session_id=response.data['id'])))
 
     @patch('api.practice_views.generate_with_gemini', return_value=([], None))
